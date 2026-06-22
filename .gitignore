@@ -1,0 +1,66 @@
+# ==========================================================================
+# Helpdesk Corporativo — .gitignore
+# ==========================================================================
+
+# --- Claude / ferramentas de IA ---
+.claude/
+CLAUDE.local.md
+
+# --- Screenshots gerados (não versionar) ---
+screenshots/
+backend/_screenshots.py
+
+# --- Banco de dados SQLite (dados locais, não vão para o repo) ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+helpdesk.db
+
+# --- Anexos enviados pelos usuários (binários, ficam só local) ---
+uploads/
+backend/uploads/
+
+# --- Segredos / variáveis de ambiente ---
+.env
+.env.*
+*.env
+
+# --- Ambientes virtuais Python ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Caches e artefatos Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node (caso use npx/playwright para os screenshots) ---
+node_modules/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Editores / IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Sistema operacional ---
+.DS_Store
+Thumbs.db
+desktop.ini

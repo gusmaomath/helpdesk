@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helpdesk Corporativo — Acesso</title>
+    <link rel="stylesheet" href="/static/css/estilo.css?v=4">
+    <script src="/static/js/tema.js?v=4"></script>
+</head>
+<body>
+    <button id="btn-tema" class="tema-toggle-login" type="button">🌙 Escuro</button>
+    <div class="login-wrap">
+        <!-- Lado institucional -->
+        <aside class="login-lado">
+            <div class="marca">
+                <span class="selo">H</span>
+                Helpdesk Corporativo
+            </div>
+            <div class="pitch">
+                <h1>Suporte interno,<br>centralizado e rastreável.</h1>
+                <p>Abra chamados, acompanhe o atendimento e tenha cada
+                   solicitação triada automaticamente por gravidade e prioridade.</p>
+            </div>
+            <div class="rodape">
+                Ambiente restrito · Uso exclusivo de colaboradores autorizados
+            </div>
+        </aside>
+
+        <!-- Formulário -->
+        <main class="login-form-area">
+            <!-- LOGIN -->
+            <div class="login-card" id="card-login">
+                <h2>Entrar</h2>
+                <p class="sub">Use sua matrícula e senha corporativa.</p>
+
+                <div id="alerta" class="alerta erro"></div>
+
+                <div class="campo">
+                    <label for="matricula">Matrícula</label>
+                    <input type="text" id="matricula" autocomplete="username"
+                           placeholder="ex.: joao.silva" autofocus>
+                </div>
+                <div class="campo">
+                    <label for="senha">Senha</label>
+                    <input type="password" id="senha" autocomplete="current-password"
+                           placeholder="Sua senha">
+                </div>
+
+                <button id="btn-entrar" class="btn btn-primario btn-largo">Entrar</button>
+                <p class="sub" style="margin-top:18px;text-align:center;">
+                    Não tem acesso?
+                    <a href="#" id="link-cadastro" style="color:var(--cor-primaria);font-weight:600;">Solicitar cadastro</a>
+                </p>
+            </div>
+
+            <!-- CADASTRO (solicitação, requer aprovação do admin) -->
+            <div class="login-card" id="card-cadastro" style="display:none;">
+                <h2>Solicitar cadastro</h2>
+                <p class="sub">Sua conta ficará <strong>pendente</strong> até a aprovação de um administrador.</p>
+
+                <div id="alerta-cad" class="alerta"></div>
+
+                <div class="campo">
+                    <label for="cad-nome">Nome completo</label>
+                    <input type="text" id="cad-nome" placeholder="Seu nome">
+                </div>
+                <div class="campo">
+                    <label for="cad-matricula">Matrícula</label>
+                    <input type="text" id="cad-matricula" placeholder="ex.: joao.silva">
+                </div>
+                <div class="linha-campos">
+                    <div class="campo">
+                        <label for="cad-setor">Setor / unidade</label>
+                        <input type="text" id="cad-setor" placeholder="Agência, depto...">
+                    </div>
+                    <div class="campo">
+                        <label for="cad-email">E-mail</label>
+                        <input type="text" id="cad-email" placeholder="voce@empresa.com">
+                    </div>
+                </div>
+                <div class="campo">
+                    <label for="cad-senha">Senha</label>
+                    <input type="password" id="cad-senha" autocomplete="new-password"
+                           placeholder="Mínimo 8 caracteres">
+                </div>
+
+                <button id="btn-cadastrar" class="btn btn-primario btn-largo">Enviar solicitação</button>
+                <p class="sub" style="margin-top:18px;text-align:center;">
+                    <a href="#" id="link-voltar-login" style="color:var(--cor-primaria);font-weight:600;">← Voltar para o login</a>
+                </p>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/api.js?v=4"></script>
+    <script src="/static/js/login.js?v=4"></script>
+</body>
+</html>

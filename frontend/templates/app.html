@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helpdesk Corporativo</title>
+    <link rel="stylesheet" href="/static/css/estilo.css?v=4">
+    <script src="/static/js/tema.js?v=4"></script>
+    <!-- Chart.js servido localmente seria o ideal em rede fechada; aqui via CDN.
+         Em produção bancária, baixe o arquivo e sirva de /static. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Barra superior -->
+    <header class="topo">
+        <div class="marca">
+            <span class="selo">H</span>
+            Helpdesk Corporativo
+        </div>
+        <div class="usuario-info">
+            <button id="btn-tema" class="tema-toggle" type="button">🌙 Escuro</button>
+            <span id="nome-usuario">—</span>
+            <span id="badge-nivel" class="badge-nivel">—</span>
+            <button id="btn-sair" class="btn btn-mini">Sair</button>
+        </div>
+    </header>
+
+    <div class="layout">
+        <!-- Menu lateral -->
+        <nav class="menu-lateral" id="menu-lateral">
+            <!-- Itens injetados por JS conforme o nível de acesso -->
+        </nav>
+
+        <!-- Conteúdo -->
+        <main class="conteudo">
+
+            <!-- PÁGINA: Abrir chamado (usuário) -->
+            <section class="pagina" id="pg-abrir">
+                <div class="pagina-cabecalho">
+                    <h1>Abrir chamado</h1>
+                    <p>Descreva o problema com o máximo de detalhes. Isso acelera o atendimento.</p>
+                </div>
+                <div class="painel" style="max-width:1160px;margin:0 auto;">
+                    <div id="alerta-abrir" class="alerta"></div>
+                    <div class="campo">
+                        <label for="titulo">Título *</label>
+                        <input type="text" id="titulo" maxlength="150"
+                               placeholder="Resuma o problema em uma frase">
+                    </div>
+                    <div class="campo">
+                        <label for="descricao">Descrição completa *</label>
+                        <textarea id="descricao" maxlength="5000" style="min-height:150px;"
+                                  placeholder="Descreva com detalhe: o que aconteceu, desde quando, mensagem de erro exata, sistema/tela afetados e passos para reproduzir."></textarea>
+                        <div class="ajuda">
+                            Mínimo de 30 caracteres. Quanto mais completo, mais rápida a triagem.
+                            <span id="contador-desc" style="float:right;font-variant-numeric:tabular-nums;">0 / 5000</span>
+                        </div>
+                    </div>
+
+                    <div class="linha-campos">
+                        <div class="campo">
+                            <label for="abrir-categoria">Categoria</label>
+                            <select id="abrir-categoria"><option value="">Selecione...</option></select>
+                        </div>
+                        <div class="campo">
+                            <label for="abrir-subcategoria">Subcategoria</label>
+                            <select id="abrir-subcategoria"><option value="">Selecione...</option></select>
+                        </div>
+                    </div>
+
+                    <div class="linha-campos">
+                        <div class="campo">
+                            <label for="abrir-sistema">Sistema afetado</label>
+                            <input type="text" id="abrir-sistema" maxlength="80"
+                                   placeholder="ERP, CRM, E-mail, VPN, Portal...">
+                        </div>
+                        <div class="campo">
+                            <label for="abrir-modulo">Módulo / tela</label>
+                            <input type="text" id="abrir-modulo" maxlength="120"
+                                   placeholder="Tela ou módulo específico">
+                        </div>
+                    </div>
+
+                    <div class="linha-campos">
+                        <div class="campo">
+                            <label for="abrir-impacto">Impacto no negócio</label>
+                            <select id="abrir-impacto">
+                                <option value="">Não informar</option>
+                                <option value="baixo">Baixo</option>
+                                <option value="medio">Médio</option>
+                                <option value="alto">Alto</option>
+                                <option value="critico">Crítico</option>
+                            </select>
+                        </div>
+                        <div class="campo">
+                            <label for="abrir-urgencia">Urgência (1 a 5)</label>
+                            <select id="abrir-urgencia">
+                                <option value="">Não informar</option>
+                                <option value="1">1 — baixa</option>
+                                <option value="2">2</option>
+                                <option value="3">3 — média</option>
+                                <option value="4">4</option>
+                                <option value="5">5 — alta</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="linha-campos">
+                        <div class="campo">
+                            <label for="abrir-unidade">Unidade / setor</label>
+                            <input type="text" id="abrir-unidade" maxlength="120"
+                                   placeholder="Agência, departamento, filial">
+                        </div>
+                        <div class="campo">
+                            <label for="abrir-contato">Contato para retorno</label>
+                            <input type="text" id="abrir-contato" maxlength="120"
+                                   placeholder="Ramal, e-mail ou Teams">
+                        </div>
+                    </div>
+
+                    <div class="campo">
+                        <label for="abrir-anexos">Anexos (prints, PDF, logs)</label>
+                        <input type="file" id="abrir-anexos" multiple
+                               accept=".png,.jpg,.jpeg,.gif,.pdf,.txt,.log,.csv,.doc,.docx,.xls,.xlsx,.zip">
+                        <div class="ajuda">Você pode selecionar vários arquivos. Até 10 MB cada.</div>
+                        <div id="lista-anexos-abrir" style="margin-top:8px;"></div>
+                    </div>
+
+                    <button id="btn-abrir" class="btn btn-primario">Abrir chamado</button>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Meus chamados (usuário) -->
+            <section class="pagina" id="pg-meus">
+                <div class="pagina-cabecalho">
+                    <h1>Meus chamados</h1>
+                    <p>Seus chamados e os de toda a sua equipe (cadeia abaixo de você).</p>
+                </div>
+                <div class="barra-ferramentas">
+                    <label for="filtro-solicitante" style="font-size:13px;font-weight:600;color:var(--cor-texto-suave);">Solicitante:</label>
+                    <select id="filtro-solicitante"><option value="">Todos</option></select>
+                    <span class="espaco-flex"></span>
+                </div>
+                <div class="tabela-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Protocolo</th>
+                                <th>Título</th>
+                                <th>Solicitante</th>
+                                <th>Gravidade</th>
+                                <th>Status</th>
+                                <th>Aberto em</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpo-meus"></tbody>
+                    </table>
+                    <div id="vazio-meus" class="vazio" style="display:none;">
+                        <div class="ico-grande">📋</div>
+                        Você ainda não abriu nenhum chamado.
+                    </div>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Minha equipe (quem tem subordinados) -->
+            <section class="pagina" id="pg-equipe">
+                <div class="pagina-cabecalho">
+                    <h1>Minha equipe</h1>
+                    <p>As pessoas abaixo de você na hierarquia. Clique para ver os chamados de cada uma.</p>
+                </div>
+                <div class="tabela-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Nome</th>
+                                <th>Papel</th>
+                                <th>Reporta a</th>
+                                <th>Setor</th>
+                                <th>Em aberto</th>
+                                <th>Total</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpo-equipe"></tbody>
+                    </table>
+                    <div id="vazio-equipe" class="vazio" style="display:none;">
+                        <div class="ico-grande">👥</div>
+                        Você não tem ninguém subordinado.
+                    </div>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Dashboard (admin) -->
+            <section class="pagina" id="pg-dashboard">
+                <div class="pagina-cabecalho">
+                    <h1>Painel de indicadores</h1>
+                    <p>Visão geral do volume, gravidade e tempo de resolução dos chamados.</p>
+                </div>
+
+                <div class="grid-kpi">
+                    <div class="kpi destaque-aberto">
+                        <div class="rotulo">Chamados em aberto</div>
+                        <div class="valor" id="kpi-abertos">—</div>
+                    </div>
+                    <div class="kpi destaque-resolvido">
+                        <div class="rotulo">Resolvidos</div>
+                        <div class="valor" id="kpi-resolvidos">—</div>
+                    </div>
+                    <div class="kpi destaque-critico">
+                        <div class="rotulo">Críticos no sistema</div>
+                        <div class="valor" id="kpi-criticos">—</div>
+                    </div>
+                    <div class="kpi destaque-tempo">
+                        <div class="rotulo">Tempo médio de resolução</div>
+                        <div class="valor pequeno" id="kpi-tempo">—</div>
+                    </div>
+                    <div class="kpi destaque-sla">
+                        <div class="rotulo">SLA vencido / em risco</div>
+                        <div class="valor pequeno" id="kpi-sla">—</div>
+                    </div>
+                    <div class="kpi destaque-csat">
+                        <div class="rotulo">Satisfação (CSAT)</div>
+                        <div class="valor pequeno" id="kpi-csat">—</div>
+                    </div>
+                </div>
+
+                <div class="grid-graficos">
+                    <div class="painel">
+                        <h3>Chamados por gravidade</h3>
+                        <div class="grafico-area"><canvas id="g-gravidade"></canvas></div>
+                    </div>
+                    <div class="painel">
+                        <h3>Distribuição por status</h3>
+                        <div class="grafico-area"><canvas id="g-status"></canvas></div>
+                    </div>
+                    <div class="painel">
+                        <h3>Chamados por prioridade (1 a 5)</h3>
+                        <div class="grafico-area"><canvas id="g-prioridade"></canvas></div>
+                    </div>
+                    <div class="painel">
+                        <h3>Aging dos chamados em aberto</h3>
+                        <div class="grafico-area"><canvas id="g-aging"></canvas></div>
+                    </div>
+                    <div class="painel">
+                        <h3>SLA dos chamados em aberto</h3>
+                        <div class="grafico-area"><canvas id="g-sla"></canvas></div>
+                    </div>
+                    <div class="painel">
+                        <h3>Carga por responsável (workload)</h3>
+                        <div class="grafico-area"><canvas id="g-workload"></canvas></div>
+                    </div>
+                    <div class="painel largura-total">
+                        <h3>Volume de chamados por dia</h3>
+                        <div class="grafico-area"><canvas id="g-volume"></canvas></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Gestão de chamados (admin) -->
+            <section class="pagina" id="pg-gestao">
+                <div class="pagina-cabecalho">
+                    <h1>Gestão de chamados</h1>
+                    <p>Visualize, filtre, responda e atualize qualquer chamado do sistema.</p>
+                </div>
+
+                <div class="barra-ferramentas">
+                    <input type="search" id="filtro-busca" placeholder="Buscar por título...">
+                    <select id="filtro-status">
+                        <option value="">Todos os status</option>
+                        <option value="aberto">Aberto</option>
+                        <option value="em_andamento">Em andamento</option>
+                        <option value="aguardando_usuario">Aguardando usuário</option>
+                        <option value="resolvido">Resolvido</option>
+                        <option value="fechado">Fechado</option>
+                    </select>
+                    <select id="filtro-gravidade">
+                        <option value="">Todas as gravidades</option>
+                        <option value="Crítica">Crítica</option>
+                        <option value="Alta">Alta</option>
+                        <option value="Média">Média</option>
+                        <option value="Baixa">Baixa</option>
+                    </select>
+                    <select id="filtro-sla">
+                        <option value="">Todos os SLAs</option>
+                        <option value="vencido">SLA vencido</option>
+                        <option value="em_risco">SLA em risco</option>
+                        <option value="ok">SLA ok</option>
+                    </select>
+                    <button id="btn-limpar-filtros" class="btn btn-fantasma btn-mini">Limpar</button>
+                </div>
+
+                <div class="tabela-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Protocolo</th>
+                                <th>Prio.</th>
+                                <th>Título</th>
+                                <th>Solicitante</th>
+                                <th>Responsável</th>
+                                <th>Gravidade</th>
+                                <th>Status</th>
+                                <th>SLA</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpo-gestao"></tbody>
+                    </table>
+                    <div id="vazio-gestao" class="vazio" style="display:none;">
+                        <div class="ico-grande">🔍</div>
+                        Nenhum chamado encontrado com os filtros atuais.
+                    </div>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Gestão de usuários (admin) -->
+            <section class="pagina" id="pg-usuarios">
+                <div class="pagina-cabecalho">
+                    <h1>Gestão de usuários</h1>
+                    <p>Crie, edite, ative/desative usuários e defina papel e supervisor.</p>
+                </div>
+                <div class="barra-ferramentas">
+                    <button id="btn-novo-usuario" class="btn btn-primario btn-mini">+ Novo usuário</button>
+                    <span class="espaco-flex"></span>
+                    <button id="btn-reset-db" class="btn btn-perigo btn-mini">⟳ Resetar banco</button>
+                </div>
+                <div class="tabela-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Nome</th>
+                                <th>Matrícula</th>
+                                <th>Papel</th>
+                                <th>Supervisor</th>
+                                <th>Setor</th>
+                                <th>Situação</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpo-usuarios"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Auditoria (admin) -->
+            <section class="pagina" id="pg-auditoria">
+                <div class="pagina-cabecalho">
+                    <h1>Trilha de auditoria</h1>
+                    <p>Quem fez o quê, quando e de onde. Registro imutável.</p>
+                </div>
+                <div class="tabela-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Quando</th>
+                                <th>Usuário</th>
+                                <th>Ação</th>
+                                <th>Entidade</th>
+                                <th>Detalhe</th>
+                                <th>IP</th>
+                            </tr>
+                        </thead>
+                        <tbody id="corpo-auditoria"></tbody>
+                    </table>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Modal de detalhe / atendimento -->
+    <div class="modal-fundo" id="modal-fundo">
+        <div class="modal">
+            <div class="modal-cabecalho">
+                <h3 id="modal-titulo">Chamado</h3>
+                <button class="fechar" id="modal-fechar" aria-label="Fechar">&times;</button>
+            </div>
+            <div class="modal-corpo" id="modal-corpo"></div>
+            <div class="modal-rodape" id="modal-rodape"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/api.js?v=5"></script>
+    <script src="/static/js/app.js?v=5"></script>
+</body>
+</html>
