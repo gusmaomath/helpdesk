@@ -6,8 +6,9 @@
 .claude/
 CLAUDE.local.md
 
-# --- Screenshots gerados (não versionar) ---
-screenshots/
+# --- Screenshots gerados na raiz (não versionar) ---
+# Obs.: ancorado em "/" para NÃO ignorar docs/telas/ (imagens do README).
+/screenshots/
 backend/_screenshots.py
 
 # --- Banco de dados SQLite (dados locais, não vão para o repo) ---

@@ -143,6 +143,38 @@ imediatamente** (via `token_version` no JWT).
 - **Trilha de auditoria**: quem fez o quê, quando e de onde.
 - **Reset do banco**: botão protegido por re-confirmação de matrícula + senha.
 
+## Capturas de tela
+
+> Imagens em `docs/telas/` (tema claro, salvo indicação). Podem ser regeradas
+> com o servidor no ar via `python backend/_screenshots.py`.
+
+### Login
+![Tela de login](docs/telas/login.png)
+
+### Painel de indicadores (admin)
+![Painel de indicadores](docs/telas/painel.png)
+
+### Gestão de chamados (admin)
+![Gestão de chamados](docs/telas/chamados.png)
+
+### Gestão de usuários (admin)
+![Gestão de usuários](docs/telas/usuarios.png)
+
+### Trilha de auditoria (admin)
+![Trilha de auditoria](docs/telas/auditoria.png)
+
+### Abrir chamado (usuário)
+![Abrir chamado](docs/telas/abrir-chamado.png)
+
+### Meus chamados — próprios + equipe (usuário)
+![Meus chamados](docs/telas/meus-chamados.png)
+
+### Minha equipe (usuário com subordinados)
+![Minha equipe](docs/telas/minha-equipe.png)
+
+### Tema escuro
+![Painel no tema escuro](docs/telas/painel-escuro.png)
+
 ## A integração de IA (Plug and Play)
 
 Toda a lógica de análise está isolada em **`backend/ia.py`**. Hoje roda um
