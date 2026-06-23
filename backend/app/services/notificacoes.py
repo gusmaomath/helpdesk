@@ -1,19 +1,22 @@
 """
-Camada de notificações — PLUG AND PLAY (mesmo padrão do módulo de IA).
+Notificações.
 
-Hoje o canal ativo apenas registra a notificação em log (e numa tabela de
-auditoria, opcionalmente). Amanhã, para enviar por e-mail/Teams/Slack, basta:
+Duas camadas:
+1. **In-app (persistente)** — `notificar_usuario()` cria uma linha em
+   `notificacoes` para um usuário específico. É o que alimenta o "sininho" do
+   topo (listar, marcar como lida, apagar).
+2. **Transporte externo plugável** — `CanalLog` (padrão) só registra em log;
+   amanhã troca-se por e-mail/Teams/Slack sem mexer no resto (mesmo padrão da IA).
 
-    1. Criar uma classe que herde de `CanalNotificacao`.
-    2. Implementar `enviar(destino, assunto, corpo)`.
-    3. Trocar `canal_ativo` no final do arquivo (ou compor vários).
-
-Assim o resto do sistema chama sempre `notificar(...)` e não sabe (nem precisa
-saber) qual transporte está por trás. Para Teams/Slack, o `enviar` faria um
-POST no Incoming Webhook configurado por variável de ambiente.
+Nada disso derruba o fluxo principal: falhas são capturadas e só logadas.
 """
 import logging
 from abc import ABC, abstractmethod
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from app.models import Notificacao
 
 logger = logging.getLogger("helpdesk.notificacoes")
 
@@ -31,32 +34,39 @@ class CanalLog(CanalNotificacao):
         logger.info("NOTIFICAÇÃO -> %s | %s | %s", destino, assunto, corpo)
 
 
-# Exemplo de esqueleto para o futuro (NÃO ativo):
-#
-# import os, json, urllib.request
-# class CanalTeams(CanalNotificacao):
-#     def __init__(self):
-#         self.webhook = os.getenv("HELPDESK_TEAMS_WEBHOOK", "")
-#     def enviar(self, destino, assunto, corpo):
-#         if not self.webhook:
-#             return
-#         payload = json.dumps({"text": f"**{assunto}**\n{corpo}"}).encode()
-#         req = urllib.request.Request(
-#             self.webhook, data=payload,
-#             headers={"Content-Type": "application/json"},
-#         )
-#         urllib.request.urlopen(req, timeout=5)
-
-
+# Para o futuro (NÃO ativo): CanalTeams faria POST num Incoming Webhook.
 canal_ativo: CanalNotificacao = CanalLog()
 
 
 def notificar(destino: str, assunto: str, corpo: str) -> None:
-    """
-    Ponto público. Nunca derruba o fluxo principal por falha de notificação
-    (degradação graciosa): captura exceções e só registra.
-    """
+    """Transporte externo (log hoje). Nunca derruba o fluxo principal."""
     try:
         canal_ativo.enviar(destino, assunto, corpo)
     except Exception as exc:  # pragma: no cover - resiliência
         logger.warning("Falha ao notificar %s: %s", destino, exc)
+
+
+def notificar_usuario(
+    db: Session,
+    usuario_id: Optional[int],
+    titulo: str,
+    corpo: str = "",
+    entidade: Optional[str] = None,
+    entidade_id: Optional[int] = None,
+    commit: bool = False,
+) -> None:
+    """
+    Cria uma notificação in-app para `usuario_id` (o "sininho" mostra). Não faz
+    commit por padrão — participa da transação da ação que a gerou.
+    """
+    if not usuario_id:
+        return
+    try:
+        db.add(Notificacao(
+            usuario_id=usuario_id, titulo=titulo, corpo=corpo,
+            entidade=entidade, entidade_id=entidade_id,
+        ))
+        if commit:
+            db.commit()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Falha ao gravar notificação p/ %s: %s", usuario_id, exc)

@@ -48,10 +48,11 @@ from app.models import (
     NivelAcesso,
     QualidadeDescritiva,
     StatusChamado,
+    Template,
     Usuario,
     agora_utc,
 )
-from app.services.notificacoes import notificar
+from app.services.notificacoes import notificar, notificar_usuario
 from app.services.protocolo import gerar_protocolo
 from app.schemas import (
     AvaliacaoCriar,
@@ -64,9 +65,10 @@ from app.schemas import (
     ComentarioCriar,
     ComentarioResposta,
     DeflexaoRequest,
+    TemplateResposta,
 )
 from app.services.serializar import serializar_chamado, serializar_detalhe
-from app.services.sla import calcular_prazo
+from app.services.sla import calcular_prazo, carregar_parametros_sla
 
 router = APIRouter(prefix="/api/chamados", tags=["Chamados"])
 
@@ -129,8 +131,11 @@ def abrir_chamado(
     chamado.ia_gravidade_sugerida = Gravidade(analise["gravidade"])
     chamado.categoria_sugerida = analise["categoria_sugerida"]
 
-    # SLA: prazo em horário comercial conforme a prioridade.
-    chamado.sla_prazo = calcular_prazo(agora_utc(), chamado.prioridade)
+    # SLA: prazo em horário comercial (parâmetros e feriados vêm do banco).
+    horas_sla, feriados = carregar_parametros_sla(db)
+    chamado.sla_prazo = calcular_prazo(
+        agora_utc(), chamado.prioridade, horas_sla, feriados
+    )
 
     db.add(chamado)
     db.flush()  # garante id para a auditoria
@@ -168,6 +173,34 @@ def listar_categorias_para_abertura(
         .order_by(Categoria.nome)
         .all()
     )
+
+
+@router.get("/templates", response_model=list[TemplateResposta])
+def listar_templates(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Modelos de chamado ativos, para pré-preencher o formulário de abertura."""
+    return (
+        db.query(Template).filter(Template.ativo.is_(True)).order_by(Template.nome).all()
+    )
+
+
+@router.post("/deflexao/aproveitada")
+def deflexao_aproveitada(
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Registra que o usuário resolveu com uma sugestão e NÃO abriu chamado
+    (métrica de deflexão). Vira um KPI no painel.
+    """
+    auditoria.registrar(
+        db, usuario=usuario, acao="deflexao_aproveitada", entidade="deflexao",
+        ip=ip_requisicao(request), commit=True,
+    )
+    return {"detail": "Obrigado! Registramos que isto resolveu seu problema."}
 
 
 @router.post("/deflexao")
@@ -393,13 +426,16 @@ def cancelar_chamado(
         detalhe={"dono": eh_dono, "motivo": dados.motivo},
         ip=ip_requisicao(request),
     )
+    # Se cancelado por um superior, avisa o dono pelo sininho.
+    if not eh_dono:
+        notificar_usuario(
+            db, chamado.autor_id,
+            titulo=f"Chamado {chamado.numero_protocolo} cancelado",
+            corpo=f"Cancelado por {usuario.nome}. Motivo: {dados.motivo}",
+            entidade="chamado", entidade_id=chamado.id,
+        )
     db.commit()
     db.refresh(chamado)
-    notificar(
-        destino=chamado.contato_retorno or "solicitante",
-        assunto=f"Chamado {chamado.numero_protocolo} cancelado",
-        corpo=f"Motivo: {dados.motivo}",
-    )
     return serializar_detalhe(chamado, incluir_internos=False)
 
 
@@ -420,10 +456,10 @@ def reabrir_chamado(
     ):
         raise HTTPException(422, "Só é possível reabrir um chamado encerrado.")
 
+    horas_sla, feriados = carregar_parametros_sla(db)
     chamado.status = StatusChamado.REABERTO
     chamado.resolvido_em = None
-    chamado.sla_escalado_em = None
-    chamado.sla_prazo = calcular_prazo(agora_utc(), chamado.prioridade)
+    chamado.sla_prazo = calcular_prazo(agora_utc(), chamado.prioridade, horas_sla, feriados)
     chamado.versao_linha += 1
     db.add(Comentario(
         chamado_id=chamado.id, autor_id=usuario.id, interno=False,

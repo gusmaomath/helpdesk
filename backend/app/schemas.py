@@ -22,6 +22,7 @@ from app.models import (
     Gravidade,
     ImpactoNegocio,
     NivelAcesso,
+    Organizacao,
     Papel,
     QualidadeDescritiva,
     StatusChamado,
@@ -67,6 +68,7 @@ class TokenResponse(BaseModel):
     nome: str
     nivel_acesso: NivelAcesso
     papel: Papel
+    organizacao: Organizacao = Organizacao.BRADESCO_BBI
     senha_provisoria: bool = False
 
 
@@ -88,6 +90,7 @@ class AutoCadastro(BaseModel):
     nome: str
     matricula: str
     senha: str
+    organizacao: Organizacao = Organizacao.BRADESCO_BBI
     email: Optional[str] = None
     unidade_setor: Optional[str] = None
 
@@ -136,6 +139,7 @@ class UsuarioCriar(BaseModel):
     senha: str
     nivel_acesso: NivelAcesso = NivelAcesso.USUARIO
     papel: Papel = Papel.COLABORADOR
+    organizacao: Organizacao = Organizacao.BRADESCO_BBI
     supervisor_id: Optional[int] = None
     unidade_setor: Optional[str] = None
     email: Optional[str] = None
@@ -213,6 +217,7 @@ class UsuarioResposta(BaseModel):
     matricula: str
     nivel_acesso: NivelAcesso
     papel: Papel
+    organizacao: Organizacao = Organizacao.BRADESCO_BBI
     supervisor_id: Optional[int] = None
     unidade_setor: Optional[str] = None
     email: Optional[str] = None
@@ -475,6 +480,15 @@ class ChamadoDetalhe(ChamadoResposta):
     comentarios: list[ComentarioResposta] = []
     anexos: list[AnexoResposta] = []
     avaliacao: Optional[AvaliacaoResposta] = None
+    tags: list[str] = []
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags_para_nomes(cls, v):
+        # Aceita tanto objetos Tag (do ORM) quanto strings.
+        if not v:
+            return []
+        return [t.nome if hasattr(t, "nome") else t for t in v]
 
 
 # --------------------------------------------------------------------------- #
@@ -509,6 +523,13 @@ class ArtigoResposta(BaseModel):
     conteudo: str
     chamado_origem_id: Optional[int] = None
     criado_em: datetime
+    uteis: int = 0
+    nao_uteis: int = 0
+    meu_voto: Optional[bool] = None   # True=👍, False=👎, None=não votou
+
+
+class ArtigoVotoRequest(BaseModel):
+    util: bool
 
 
 class ArtigoAtualizar(BaseModel):
@@ -566,3 +587,124 @@ class AcaoMassa(BaseModel):
         if v not in ("atribuir", "status", "cancelar"):
             raise ValueError("Ação inválida.")
         return v
+
+
+# --------------------------------------------------------------------------- #
+# Notificações (sininho)
+# --------------------------------------------------------------------------- #
+class NotificacaoResposta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    titulo: str
+    corpo: Optional[str] = None
+    lida: bool
+    entidade: Optional[str] = None
+    entidade_id: Optional[int] = None
+    criado_em: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Templates de chamado
+# --------------------------------------------------------------------------- #
+class TemplateBase(BaseModel):
+    nome: str
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    categoria_id: Optional[int] = None
+    subcategoria_id: Optional[int] = None
+    sistema_afetado: Optional[str] = None
+    impacto_negocio: Optional[ImpactoNegocio] = None
+    ativo: bool = True
+
+    @field_validator("nome")
+    @classmethod
+    def vnome(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Nome do modelo muito curto.")
+        return _sanitizar(v)
+
+    @field_validator("titulo", "descricao", "sistema_afetado")
+    @classmethod
+    def san(cls, v):
+        return _sanitizar_opcional(v)
+
+
+class TemplateResposta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nome: str
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    categoria_id: Optional[int] = None
+    subcategoria_id: Optional[int] = None
+    sistema_afetado: Optional[str] = None
+    impacto_negocio: Optional[ImpactoNegocio] = None
+    ativo: bool
+
+
+# --------------------------------------------------------------------------- #
+# Tags
+# --------------------------------------------------------------------------- #
+class TagsRequest(BaseModel):
+    tags: list[str] = []
+
+    @field_validator("tags")
+    @classmethod
+    def vtags(cls, v):
+        limpas = []
+        for t in v:
+            t = _sanitizar(t.strip().lower())[:40]
+            if t and t not in limpas:
+                limpas.append(t)
+        return limpas[:15]
+
+
+# --------------------------------------------------------------------------- #
+# Mesclar chamados
+# --------------------------------------------------------------------------- #
+class MesclarRequest(BaseModel):
+    destino_id: int   # chamado que permanece (o duplicado é encerrado)
+
+
+# --------------------------------------------------------------------------- #
+# Perfil próprio
+# --------------------------------------------------------------------------- #
+class PerfilAtualizar(BaseModel):
+    email: Optional[str] = None
+    ramal: Optional[str] = None
+
+    @field_validator("email", "ramal")
+    @classmethod
+    def san(cls, v):
+        return _sanitizar_opcional(v)
+
+
+# --------------------------------------------------------------------------- #
+# Configuração de SLA + feriados
+# --------------------------------------------------------------------------- #
+class ParametroSlaItem(BaseModel):
+    prioridade: int = Field(ge=1, le=5)
+    horas: int = Field(ge=1, le=2000)
+
+
+class ParametrosSlaRequest(BaseModel):
+    itens: list[ParametroSlaItem]
+
+
+class FeriadoItem(BaseModel):
+    data: str   # YYYY-MM-DD
+    descricao: Optional[str] = None
+
+    @field_validator("data")
+    @classmethod
+    def vdata(cls, v: str) -> str:
+        v = v.strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError("Data deve estar no formato AAAA-MM-DD.")
+        return v
+
+    @field_validator("descricao")
+    @classmethod
+    def san(cls, v):
+        return _sanitizar_opcional(v)

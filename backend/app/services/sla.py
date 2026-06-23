@@ -16,46 +16,68 @@ from datetime import datetime, timedelta, timezone
 from app.config import config
 
 
-def _eh_expediente(dt: datetime) -> bool:
+def _eh_expediente(dt: datetime, feriados: set | None = None) -> bool:
+    if feriados and dt.strftime("%Y-%m-%d") in feriados:
+        return False
     return (
         dt.weekday() in config.SLA_DIAS_UTEIS
         and config.SLA_HORA_INICIO <= dt.hour < config.SLA_HORA_FIM
     )
 
 
-def _proximo_inicio_expediente(dt: datetime) -> datetime:
+def _proximo_inicio_expediente(dt: datetime, feriados: set | None = None) -> datetime:
     """Avança `dt` até o próximo instante dentro do expediente."""
     guarda = 0
-    while not _eh_expediente(dt) and guarda < 24 * 14:  # teto de 2 semanas
-        # Salta para o começo da próxima hora; barato e robusto.
+    while not _eh_expediente(dt, feriados) and guarda < 24 * 30:  # teto ~1 mês
         dt = (dt + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
         guarda += 1
     return dt
 
 
-def calcular_prazo(criado_em: datetime, prioridade: int | None) -> datetime:
+def calcular_prazo(
+    criado_em: datetime,
+    prioridade: int | None,
+    horas_por_prioridade: dict | None = None,
+    feriados: set | None = None,
+) -> datetime:
     """
     Soma N horas-úteis (conforme a prioridade) a partir de `criado_em`,
-    respeitando jornada e dias úteis. Retorna o deadline (timezone-aware UTC).
+    respeitando jornada, dias úteis e feriados. `horas_por_prioridade` e
+    `feriados` podem vir do banco (config editável); caso contrário usa os
+    padrões de `config.py`. Retorna o deadline (timezone-aware UTC).
     """
     if criado_em.tzinfo is None:
         criado_em = criado_em.replace(tzinfo=timezone.utc)
 
-    horas = config.SLA_HORAS_POR_PRIORIDADE.get(prioridade or 1, 40)
+    tabela = horas_por_prioridade or config.SLA_HORAS_POR_PRIORIDADE
+    horas = tabela.get(prioridade or 1, 40)
     restante = timedelta(hours=horas)
 
-    atual = _proximo_inicio_expediente(criado_em)
+    atual = _proximo_inicio_expediente(criado_em, feriados)
     passo = timedelta(minutes=15)  # granularidade do avanço
 
     guarda = 0
     while restante > timedelta(0) and guarda < 100_000:
-        if _eh_expediente(atual):
+        if _eh_expediente(atual, feriados):
             atual += passo
             restante -= passo
         else:
-            atual = _proximo_inicio_expediente(atual)
+            atual = _proximo_inicio_expediente(atual, feriados)
         guarda += 1
     return atual
+
+
+def carregar_parametros_sla(db):
+    """
+    Lê do banco a tabela de horas por prioridade e o conjunto de feriados.
+    Retorna (dict_horas, set_feriados). Cai nos padrões se vazio.
+    """
+    from app.models import Feriado, ParametroSla
+    horas = {p.prioridade: p.horas for p in db.query(ParametroSla).all()}
+    if not horas:
+        horas = dict(config.SLA_HORAS_POR_PRIORIDADE)
+    feriados = {f.data for f in db.query(Feriado).all()}
+    return horas, feriados
 
 
 def segundos_uteis_decorridos(

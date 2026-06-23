@@ -17,22 +17,27 @@ Sobre migrações: em produção o schema deve ser versionado com Alembic
 """
 import random
 import sys
-from datetime import timedelta
+from datetime import date, timedelta
 
 from app.security.auth import gerar_hash_senha
 from app.database import Base, SessionLocal, engine
 from app.services.ia import analisar_chamado
+from app.config import config
 from app.models import (
     Artigo,
     Categoria,
     Chamado,
+    Feriado,
     Gravidade,
     ImpactoNegocio,
     NivelAcesso,
+    Organizacao,
     Papel,
+    ParametroSla,
     QualidadeDescritiva,
     StatusChamado,
     Subcategoria,
+    Template,
     Usuario,
     agora_utc,
 )
@@ -120,15 +125,106 @@ def criar_kb(db, autor):
     db.commit()
 
 
+def criar_config_sla(db):
+    if db.query(ParametroSla).first():
+        return
+    for prioridade, horas in config.SLA_HORAS_POR_PRIORIDADE.items():
+        db.add(ParametroSla(prioridade=prioridade, horas=horas))
+    db.commit()
+
+
+def _domingo_de_pascoa(ano: int) -> date:
+    """Data da Páscoa (algoritmo de Meeus/Jones/Butcher) — base dos móveis."""
+    a = ano % 19
+    b, c = divmod(ano, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mes, dia = divmod(h + l - 7 * m + 114, 31)
+    return date(ano, mes, dia + 1)
+
+
+def feriados_b3(ano: int) -> dict:
+    """
+    Calendário oficial de feriados da B3 para o ano (sem pregão), incluindo os
+    móveis derivados da Páscoa. Consciência Negra entrou como nacional em 2024.
+    """
+    pascoa = _domingo_de_pascoa(ano)
+    feriados = {
+        f"{ano}-01-01": "Confraternização Universal",
+        f"{ano}-04-21": "Tiradentes",
+        f"{ano}-05-01": "Dia do Trabalho",
+        f"{ano}-09-07": "Independência do Brasil",
+        f"{ano}-10-12": "Nossa Senhora Aparecida",
+        f"{ano}-11-02": "Finados",
+        f"{ano}-11-15": "Proclamação da República",
+        f"{ano}-12-25": "Natal",
+        # Véspera de Natal e de Ano-Novo: B3 não opera.
+        f"{ano}-12-24": "Véspera de Natal (B3 sem pregão)",
+        f"{ano}-12-31": "Véspera de Ano-Novo (B3 sem pregão)",
+        # Móveis (dependentes da Páscoa):
+        (pascoa - timedelta(days=48)).isoformat(): "Carnaval (segunda)",
+        (pascoa - timedelta(days=47)).isoformat(): "Carnaval (terça)",
+        (pascoa - timedelta(days=2)).isoformat(): "Sexta-feira Santa",
+        (pascoa + timedelta(days=60)).isoformat(): "Corpus Christi",
+    }
+    if ano >= 2024:
+        feriados[f"{ano}-11-20"] = "Consciência Negra"
+    return feriados
+
+
+def criar_feriados_b3(db):
+    """Pré-carrega o calendário B3 do ano atual e do próximo (idempotente)."""
+    ano = agora_utc().year
+    existentes = {f.data for f in db.query(Feriado).all()}
+    novos = 0
+    for a in (ano, ano + 1):
+        for data, descricao in feriados_b3(a).items():
+            if data not in existentes:
+                db.add(Feriado(data=data, descricao=descricao))
+                existentes.add(data)
+                novos += 1
+    if novos:
+        print(f"Carregando {novos} feriados da B3 ({ano}/{ano + 1})...")
+        db.commit()
+
+
+def criar_templates(db, db_cats):
+    if db.query(Template).first():
+        return
+    print("Criando modelos (templates) de chamado...")
+    modelos = [
+        ("Solicitar acesso a sistema", "Solicitação de acesso",
+         "Sistema: \nPerfil/permissão necessária: \nJustificativa/aprovador: ",
+         "Acesso", ImpactoNegocio.MEDIO),
+        ("Trocar periférico (mouse/teclado)", "Troca de periférico",
+         "Equipamento com defeito: \nNº de patrimônio: \nLocal/ramal: ",
+         "Hardware", ImpactoNegocio.BAIXO),
+        ("Reportar erro em sistema", "Erro no sistema",
+         "Sistema/tela: \nMensagem de erro exata: \nPassos para reproduzir: ",
+         "Sistema", ImpactoNegocio.ALTO),
+    ]
+    for nome, titulo, descricao, cat_nome, impacto in modelos:
+        db.add(Template(
+            nome=nome, titulo=titulo, descricao=descricao,
+            categoria_id=db_cats.get(cat_nome), impacto_negocio=impacto,
+        ))
+    db.commit()
+
+
 def criar_usuario(db, nome, matricula, senha, nivel, papel, supervisor=None,
-                  setor=None, email=None):
+                  setor=None, email=None, organizacao=Organizacao.BRADESCO_BBI):
     existente = db.query(Usuario).filter(Usuario.matricula == matricula).first()
     if existente:
         print(f"  - Usuário '{matricula}' já existe, pulando.")
         return existente
     u = Usuario(
         nome=nome, matricula=matricula, senha_hash=gerar_hash_senha(senha),
-        nivel_acesso=nivel, papel=papel,
+        nivel_acesso=nivel, papel=papel, organizacao=organizacao,
         supervisor_id=supervisor.id if supervisor else None,
         unidade_setor=setor, email=email,
     )
@@ -229,10 +325,12 @@ def executar_seed(reset: bool = False) -> None:
             NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=lider,
             setor="Agência Central", email="joao@empresa.com",
         )
+        # Maria é usuária da Ágora Investimentos (interface verde-petróleo).
         maria = criar_usuario(
             db, "Maria Souza", "maria.souza", "Senha@1234",
             NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=lider,
-            setor="Filial Sul", email="maria@empresa.com",
+            setor="Filial Sul", email="maria@agorainvest.com.br",
+            organizacao=Organizacao.AGORA,
         )
 
         if not db.query(Chamado).first():
@@ -263,6 +361,9 @@ def executar_seed(reset: bool = False) -> None:
             print("  - Já existem chamados, pulando criação.")
 
         criar_kb(db, admin)
+        criar_config_sla(db)
+        criar_feriados_b3(db)
+        criar_templates(db, db_cats)
 
         print("\nSeed concluído com sucesso!")
         print("-" * 56)

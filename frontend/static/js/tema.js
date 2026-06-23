@@ -20,12 +20,30 @@
         document.documentElement.setAttribute('data-theme', tema);
     }
 
-    // Aplica imediatamente (script roda no <head>).
+    // --- Marca (esquema de cores: Bradesco BBI vinho / Ágora verde) ---
+    // A marca vem do usuário logado (sessionStorage). 'agora' troca a paleta;
+    // qualquer outro valor cai no padrão Bradesco BBI.
+    function marcaDoUsuario() {
+        try {
+            const u = JSON.parse(sessionStorage.getItem('helpdesk_usuario') || 'null');
+            return u && u.org === 'agora' ? 'agora' : 'bradesco';
+        } catch (_) { return 'bradesco'; }
+    }
+    function aplicarMarca(marca) {
+        document.documentElement.setAttribute(
+            'data-marca', marca === 'agora' ? 'agora' : 'bradesco');
+    }
+
+    // Aplica imediatamente (script roda no <head>) — tema e marca, sem flash.
     aplicar(temaSalvo());
+    aplicarMarca(marcaDoUsuario());
 
     // API pública para o botão de toggle.
     window.Tema = {
         atual: temaSalvo,
+        /** Aplica uma marca (cor) — usado no preview do cadastro e ao logar. */
+        aplicarMarca,
+        marcaDoUsuario,
         alternar() {
             const novo = temaSalvo() === 'dark' ? 'light' : 'dark';
             localStorage.setItem(CHAVE, novo);

@@ -51,13 +51,17 @@ from app.models import (
     Categoria,
     Chamado,
     Comentario,
+    Feriado,
     Gravidade,
+    ParametroSla,
     StatusChamado,
     Subcategoria,
+    Tag,
+    Template,
     Usuario,
     agora_utc,
 )
-from app.services.notificacoes import notificar
+from app.services.notificacoes import notificar_usuario
 from app.schemas import (
     AcaoMassa,
     ArtigoCriar,
@@ -73,7 +77,13 @@ from app.schemas import (
     ComentarioCriar,
     ComentarioResposta,
     ConfirmacaoCredencial,
+    FeriadoItem,
+    MesclarRequest,
+    ParametrosSlaRequest,
     SubcategoriaCriar,
+    TagsRequest,
+    TemplateBase,
+    TemplateResposta,
 )
 from app.services.serializar import serializar_chamado, serializar_detalhe
 from app.services.sla import faixa_aging, status_sla
@@ -100,6 +110,7 @@ def listar_chamados(
     categoria: Optional[int] = Query(None),
     atribuido: Optional[int] = Query(None),
     sla: Optional[str] = Query(None, description="ok | em_risco | vencido"),
+    tag: Optional[str] = Query(None, max_length=40),
     de: Optional[str] = Query(None, description="data inicial YYYY-MM-DD"),
     ate: Optional[str] = Query(None, description="data final YYYY-MM-DD"),
     busca: Optional[str] = Query(None, max_length=150),
@@ -114,6 +125,8 @@ def listar_chamados(
         query = query.filter(Chamado.gravidade == gravidade_filtro)
     if categoria is not None:
         query = query.filter(Chamado.categoria_id == categoria)
+    if tag:
+        query = query.filter(Chamado.tags.any(Tag.nome == tag.strip().lower()))
     if atribuido is not None:
         query = query.filter(Chamado.atribuido_a_id == atribuido)
     if de:
@@ -280,13 +293,14 @@ def responder(
         db, usuario=usuario, acao="resposta_publica", entidade="chamado",
         entidade_id=chamado.id, ip=ip_requisicao(request),
     )
+    notificar_usuario(
+        db, chamado.autor_id,
+        titulo=f"Resposta no chamado {chamado.numero_protocolo}",
+        corpo="A equipe de suporte respondeu seu chamado.",
+        entidade="chamado", entidade_id=chamado.id,
+    )
     db.commit()
     db.refresh(chamado)
-    notificar(
-        destino=chamado.contato_retorno or "solicitante",
-        assunto=f"Atualização no chamado {chamado.numero_protocolo}",
-        corpo="A equipe de suporte respondeu seu chamado.",
-    )
     return serializar_detalhe(chamado, incluir_internos=True)
 
 
@@ -365,6 +379,14 @@ def alterar_status(
         detalhe={"de": atual.value, "para": novo.value},
         ip=ip_requisicao(request),
     )
+    # Avisa o solicitante das transições mais relevantes.
+    if novo in (StatusChamado.RESOLVIDO, StatusChamado.FECHADO):
+        notificar_usuario(
+            db, chamado.autor_id,
+            titulo=f"Chamado {chamado.numero_protocolo} {novo.value}",
+            corpo="Seu chamado foi atualizado pela equipe de suporte.",
+            entidade="chamado", entidade_id=chamado.id,
+        )
     db.commit()
     db.refresh(chamado)
     return serializar_detalhe(chamado, incluir_internos=True)
@@ -398,6 +420,12 @@ def atualizar_classificacao(
         chamado.impacto_negocio = dados.impacto_negocio
     if dados.atribuido_a_id is not None:
         chamado.atribuido_a_id = dados.atribuido_a_id; mudancas["atribuido_a"] = dados.atribuido_a_id
+        # Avisa o novo responsável pelo sininho.
+        notificar_usuario(
+            db, dados.atribuido_a_id,
+            titulo=f"Chamado {chamado.numero_protocolo} atribuído a você",
+            corpo=chamado.titulo, entidade="chamado", entidade_id=chamado.id,
+        )
 
     chamado.versao_linha += 1
     auditoria.registrar(
@@ -515,6 +543,10 @@ def dashboard(
     sla_cumprimento = round(100 * sla_no_prazo / sla_com_prazo, 1) if sla_com_prazo else None
     volume = [{"data": d, "total": volume_map[d]} for d in sorted(volume_map)]
     media = lambda d: {k: round(v[0] / v[1], 2) for k, v in d.items() if v[1]}
+    # Deflexões: quantas vezes um usuário resolveu com sugestão e NÃO abriu chamado.
+    deflexoes = (
+        db.query(Auditoria).filter(Auditoria.acao == "deflexao_aproveitada").count()
+    )
 
     return {
         "total_chamados": total,
@@ -523,6 +555,7 @@ def dashboard(
         "tempo_medio_resolucao_horas": tempo_medio,
         "csat_medio": csat_medio,
         "sla_cumprimento": sla_cumprimento,
+        "deflexoes": deflexoes,
         "por_status": por_status,
         "por_gravidade": por_gravidade,
         "por_prioridade": por_prioridade,
@@ -743,3 +776,174 @@ def criar_subcategoria(
     db.commit()
     db.refresh(sub)
     return {"id": sub.id, "nome": sub.nome, "categoria_id": sub.categoria_id}
+
+
+# --------------------------------------------------------------------------- #
+# Templates de chamado (modelos pré-preenchidos)
+# --------------------------------------------------------------------------- #
+@router.get("/templates", response_model=list[TemplateResposta])
+def listar_templates(db: Session = Depends(get_db), usuario: Usuario = Depends(obter_usuario_atual)):
+    return db.query(Template).order_by(Template.nome).all()
+
+
+@router.post("/templates", response_model=TemplateResposta, status_code=201)
+def criar_template(dados: TemplateBase, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    t = Template(**dados.model_dump())
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return t
+
+
+@router.put("/templates/{template_id}", response_model=TemplateResposta)
+def atualizar_template(template_id: int, dados: TemplateBase, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    t = db.get(Template, template_id)
+    if t is None:
+        raise HTTPException(404, "Modelo não encontrado.")
+    for k, v in dados.model_dump().items():
+        setattr(t, k, v)
+    db.commit()
+    db.refresh(t)
+    return t
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+def excluir_template(template_id: int, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    t = db.get(Template, template_id)
+    if t is None:
+        raise HTTPException(404, "Modelo não encontrado.")
+    db.delete(t)
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Tags (etiquetas) de um chamado
+# --------------------------------------------------------------------------- #
+@router.get("/tags")
+def listar_tags(db: Session = Depends(get_db), usuario: Usuario = Depends(obter_usuario_atual)):
+    return [t.nome for t in db.query(Tag).order_by(Tag.nome).all()]
+
+
+@router.put("/chamados/{chamado_id}/tags", response_model=ChamadoDetalhe)
+def definir_tags(
+    chamado_id: int,
+    dados: TagsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Substitui as etiquetas do chamado (cria as que não existem)."""
+    chamado = _buscar_chamado(db, chamado_id)
+    novas = []
+    for nome in dados.tags:
+        tag = db.query(Tag).filter(Tag.nome == nome).first()
+        if tag is None:
+            tag = Tag(nome=nome)
+            db.add(tag)
+            db.flush()
+        novas.append(tag)
+    chamado.tags = novas
+    chamado.versao_linha += 1
+    auditoria.registrar(
+        db, usuario=usuario, acao="tags_alteradas", entidade="chamado",
+        entidade_id=chamado.id, detalhe={"tags": dados.tags}, ip=ip_requisicao(request),
+    )
+    db.commit()
+    db.refresh(chamado)
+    return serializar_detalhe(chamado, incluir_internos=True)
+
+
+# --------------------------------------------------------------------------- #
+# Mesclar chamados duplicados
+# --------------------------------------------------------------------------- #
+@router.post("/chamados/{chamado_id}/mesclar", response_model=ChamadoDetalhe)
+def mesclar_chamado(
+    chamado_id: int,
+    dados: MesclarRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Mescla o chamado {chamado_id} (duplicado) no chamado {destino_id} (principal):
+    move comentários e anexos, encerra o duplicado como CANCELADO e registra o
+    vínculo. Retorna o chamado PRINCIPAL atualizado.
+    """
+    if dados.destino_id == chamado_id:
+        raise HTTPException(422, "Escolha um chamado de destino diferente.")
+    dup = _buscar_chamado(db, chamado_id)
+    principal = _buscar_chamado(db, dados.destino_id)
+    if dup.status in ESTADOS_ENCERRADOS:
+        raise HTTPException(422, "O chamado a mesclar já está encerrado.")
+
+    for com in list(dup.comentarios):
+        com.chamado_id = principal.id
+    for anx in list(dup.anexos):
+        anx.chamado_id = principal.id
+
+    dup.status = StatusChamado.CANCELADO
+    dup.resolvido_em = agora_utc()
+    dup.mesclado_em_id = principal.id
+    dup.versao_linha += 1
+    principal.versao_linha += 1
+    db.add(Comentario(
+        chamado_id=principal.id, autor_id=usuario.id, interno=True,
+        corpo=f"Chamado {dup.numero_protocolo} mesclado neste por {usuario.nome}.",
+    ))
+    db.add(Comentario(
+        chamado_id=dup.id, autor_id=usuario.id, interno=False,
+        corpo=f"Mesclado no chamado {principal.numero_protocolo}.",
+    ))
+    auditoria.registrar(
+        db, usuario=usuario, acao="chamado_mesclado", entidade="chamado",
+        entidade_id=dup.id, detalhe={"destino": principal.id}, ip=ip_requisicao(request),
+    )
+    db.commit()
+    db.refresh(principal)
+    return serializar_detalhe(principal, incluir_internos=True)
+
+
+# --------------------------------------------------------------------------- #
+# Configuração de SLA (horas por prioridade) e feriados
+# --------------------------------------------------------------------------- #
+@router.get("/config/sla")
+def obter_config_sla(db: Session = Depends(get_db), usuario: Usuario = Depends(obter_usuario_atual)):
+    horas = {p.prioridade: p.horas for p in db.query(ParametroSla).all()}
+    if not horas:
+        from app.config import config as cfg
+        horas = dict(cfg.SLA_HORAS_POR_PRIORIDADE)
+    feriados = [
+        {"data": f.data, "descricao": f.descricao}
+        for f in db.query(Feriado).order_by(Feriado.data).all()
+    ]
+    return {"horas_por_prioridade": horas, "feriados": feriados}
+
+
+@router.put("/config/sla")
+def salvar_config_sla(dados: ParametrosSlaRequest, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    for item in dados.itens:
+        p = db.get(ParametroSla, item.prioridade)
+        if p is None:
+            db.add(ParametroSla(prioridade=item.prioridade, horas=item.horas))
+        else:
+            p.horas = item.horas
+    db.commit()
+    return {"detail": "Parâmetros de SLA atualizados."}
+
+
+@router.post("/config/feriados", status_code=201)
+def adicionar_feriado(dados: FeriadoItem, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    if db.get(Feriado, dados.data) is not None:
+        raise HTTPException(409, "Feriado já cadastrado nessa data.")
+    db.add(Feriado(data=dados.data, descricao=dados.descricao))
+    db.commit()
+    return {"detail": "Feriado adicionado."}
+
+
+@router.delete("/config/feriados/{data}", status_code=204)
+def remover_feriado(data: str, db: Session = Depends(get_db), admin: Usuario = Depends(exigir_admin)):
+    f = db.get(Feriado, data)
+    if f is None:
+        raise HTTPException(404, "Feriado não encontrado.")
+    db.delete(f)
+    db.commit()

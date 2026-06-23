@@ -20,6 +20,11 @@
     // "Abrir chamado" e "Meus chamados" (próprios + subordinados diretos).
     const ehAdmin = usuario.nivel === 'administrador';
 
+    // Estado: sub-aba "Minha fila" da gestão (filtra atribuídos ao usuário logado).
+    let gestaoMinhaFila = false;
+    // Estado: termo da busca global aplicado em "Meus chamados" (não-admin).
+    let buscaMeusTexto = '';
+
     // --- Tema (toggle no topo) ---
     if (window.Tema) window.Tema.conectarBotao(document.getElementById('btn-tema'));
 
@@ -62,14 +67,31 @@
     document.getElementById('btn-sair').addEventListener('click', () => API.sair());
 
     const menu = document.getElementById('menu-lateral');
+    // Grupos com sub-abas: o item de menu abre a primeira sub-aba e mostra a barra de sub-navegação.
+    const GRUPOS = {
+        chamados: [
+            { id: 'gestao', rotulo: 'Lista' },
+            { id: 'minhafila', rotulo: 'Minha fila' },
+            { id: 'kanban', rotulo: 'Kanban' },
+        ],
+        administracao: [
+            { id: 'usuarios', rotulo: 'Usuários' },
+            { id: 'modelos', rotulo: 'Modelos' },
+            { id: 'config', rotulo: 'SLA & Feriados' },
+            { id: 'categorias', rotulo: 'Categorias' },
+            { id: 'auditoria', rotulo: 'Auditoria' },
+        ],
+    };
+    // Mapa sub-página → grupo pai (para destacar o item de menu correto).
+    const PAI = {};
+    Object.entries(GRUPOS).forEach(([g, subs]) => subs.forEach(s => { PAI[s.id] = g; }));
+
     const itensMenu = ehAdmin
         ? [
             { id: 'dashboard', ico: '📊', rotulo: 'Painel' },
-            { id: 'gestao', ico: '🗂️', rotulo: 'Chamados' },
-            { id: 'kanban', ico: '🔲', rotulo: 'Kanban' },
+            { id: 'chamados', ico: '🗂️', rotulo: 'Chamados', grupo: true },
             { id: 'kb', ico: '📚', rotulo: 'Conhecimento' },
-            { id: 'usuarios', ico: '👥', rotulo: 'Usuários' },
-            { id: 'auditoria', ico: '📜', rotulo: 'Auditoria' },
+            { id: 'administracao', ico: '⚙️', rotulo: 'Administração', grupo: true },
             { id: 'ajuda', ico: '❓', rotulo: 'Como usar' },
           ]
         : [
@@ -83,21 +105,48 @@
         btn.className = 'item-menu';
         btn.dataset.pagina = item.id;
         btn.innerHTML = `<span class="ico">${item.ico}</span><span>${item.rotulo}</span>`;
-        btn.addEventListener('click', () => navegar(item.id));
+        // Item de grupo abre a primeira sub-aba; item simples navega direto.
+        // Clicar no menu zera a busca global (a busca chama navegar() direto).
+        btn.addEventListener('click', () => {
+            buscaMeusTexto = '';
+            navegar(item.grupo ? GRUPOS[item.id][0].id : item.id);
+        });
         menu.appendChild(btn);
     });
 
+    const subnav = document.getElementById('subnav');
+    function renderSubnav(grupo, ativo) {
+        if (!subnav) return;
+        if (!grupo || !GRUPOS[grupo]) { subnav.innerHTML = ''; subnav.classList.remove('ativa'); return; }
+        subnav.classList.add('ativa');
+        subnav.innerHTML = '';
+        GRUPOS[grupo].forEach(s => {
+            const b = document.createElement('button');
+            b.className = 'subnav-item' + (s.id === ativo ? ' ativo' : '');
+            b.textContent = s.rotulo;
+            b.addEventListener('click', () => navegar(s.id));
+            subnav.appendChild(b);
+        });
+    }
+
     function navegar(pagina) {
+        // "minhafila" reaproveita a tela de gestão (pg-gestao) com filtro "atribuídos a mim".
+        gestaoMinhaFila = pagina === 'minhafila';
+        const pgId = pagina === 'minhafila' ? 'gestao' : pagina;
+
         document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
         document.querySelectorAll('.item-menu').forEach(b => b.classList.remove('ativo'));
-        const sec = document.getElementById('pg-' + pagina);
+        const sec = document.getElementById('pg-' + pgId);
         if (sec) sec.classList.add('ativa');
-        const btn = document.querySelector(`.item-menu[data-pagina="${pagina}"]`);
+
+        const grupo = PAI[pagina];
+        const btn = document.querySelector(`.item-menu[data-pagina="${grupo || pagina}"]`);
         if (btn) btn.classList.add('ativo');
+        renderSubnav(grupo, pagina);
 
         if (pagina === 'meus') carregarMeusChamados();
         if (pagina === 'equipe') carregarEquipe();
-        if (pagina === 'gestao') carregarGestao();
+        if (pagina === 'gestao' || pagina === 'minhafila') carregarGestao();
         if (pagina === 'kanban') carregarKanban();
         if (pagina === 'kb') carregarKb();
         if (pagina === 'dashboard') carregarDashboard();
@@ -105,7 +154,11 @@
         if (pagina === 'auditoria') carregarAuditoria();
         if (pagina === 'abrir') carregarCategoriasAbrir();
         if (pagina === 'ajuda') carregarAjuda();
+        if (pagina === 'modelos') carregarModelos();
+        if (pagina === 'config') carregarConfig();
+        if (pagina === 'categorias') carregarCategoriasAdmin();
     }
+    window.navegar = navegar;
 
     // Aba "Como usar": mostra o perfil logado e destaca a seção dele.
     function carregarAjuda() {
@@ -176,6 +229,7 @@
     // ================================================================== //
     // SOLICITANTE
     // ================================================================== //
+    let templatesCache = [];
     async function carregarCategoriasAbrir() {
         if (ehAdmin) return;
         const cats = await garantirCategorias();
@@ -184,6 +238,27 @@
         if (!selCat) return;
         preencherSelectCategorias(selCat, cats);
         selCat.onchange = () => preencherSelectSubcategorias(selSub, cats, selCat.value);
+
+        // Modelos (templates) — preenchem o formulário.
+        if (!templatesCache.length) {
+            try { templatesCache = await API.templatesAbertura(); } catch (e) { templatesCache = []; }
+        }
+        const selT = document.getElementById('abrir-template');
+        if (selT && templatesCache.length) {
+            document.getElementById('campo-template').style.display = '';
+            selT.innerHTML = '<option value="">Começar do zero...</option>'
+                + templatesCache.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('');
+            selT.onchange = () => {
+                const t = templatesCache.find(x => x.id == selT.value);
+                if (!t) return;
+                document.getElementById('titulo').value = t.titulo || '';
+                document.getElementById('descricao').value = t.descricao || '';
+                if (t.sistema_afetado) document.getElementById('abrir-sistema').value = t.sistema_afetado;
+                if (t.impacto_negocio) document.getElementById('abrir-impacto').value = t.impacto_negocio;
+                if (t.categoria_id) { selCat.value = t.categoria_id; preencherSelectSubcategorias(selSub, cats, t.categoria_id); }
+                document.getElementById('descricao').dispatchEvent(new Event('input'));
+            };
+        }
     }
 
     if (!ehAdmin) {
@@ -226,6 +301,14 @@
         const agendarDeflexao = () => { clearTimeout(deflTimer); deflTimer = setTimeout(buscarDeflexao, 600); };
         $tit.addEventListener('input', agendarDeflexao);
         $desc.addEventListener('input', agendarDeflexao);
+
+        // "Isso resolveu, não preciso abrir" — registra a deflexão.
+        document.getElementById('btn-deflexao-resolvi').addEventListener('click', async () => {
+            try { await API.deflexaoAproveitada(); } catch (e) { /* segue */ }
+            $deflPainel.style.display = 'none';
+            alertaAbrir('Que bom que resolveu! 🎉 Nada foi aberto.', 'sucesso');
+            ['titulo', 'descricao'].forEach(id => document.getElementById(id).value = '');
+        });
 
         // Pré-visualização dos arquivos escolhidos.
         const $fileInput = document.getElementById('abrir-anexos');
@@ -299,9 +382,15 @@
         const vazio = document.getElementById('vazio-meus');
         const selEl = document.getElementById('filtro-solicitante');
         const filtro = selEl ? selEl.value : '';
-        const lista = filtro
+        let lista = filtro
             ? meusChamadosCache.filter(c => c.autor && String(c.autor.id) === String(filtro))
             : meusChamadosCache;
+        if (buscaMeusTexto) {
+            const t = buscaMeusTexto.toLowerCase();
+            lista = lista.filter(c =>
+                (c.titulo || '').toLowerCase().includes(t) ||
+                (c.numero_protocolo || '').toLowerCase().includes(t));
+        }
 
         corpo.innerHTML = '';
         if (!lista.length) { vazio.style.display = 'block'; return; }
@@ -347,6 +436,7 @@
                 tr.querySelector('button').addEventListener('click', () => {
                     const sel = document.getElementById('filtro-solicitante');
                     if (sel) sel.value = String(m.id);
+                    buscaMeusTexto = '';
                     navegar('meus');
                 });
                 corpo.appendChild(tr);
@@ -374,15 +464,59 @@
         if (a) { a.textContent = msg; a.className = 'alerta erro visivel'; }
     }
 
+    function ehImagem(nome) { return /\.(png|jpe?g|gif|webp|bmp)$/i.test(nome || ''); }
+
     function renderAnexos(c) {
         if (!c.anexos || !c.anexos.length) return '';
+        const imgs = c.anexos.filter(a => ehImagem(a.nome_original));
+        const thumbs = imgs.map(a => `
+            <button type="button" class="anexo-thumb" data-cid="${c.id}" data-aid="${a.id}"
+                    data-nome="${esc(a.nome_original)}" title="${esc(a.nome_original)}">
+                <img alt="${esc(a.nome_original)}" data-thumb="${c.id}-${a.id}">
+            </button>`).join('');
         const itens = c.anexos.map(a => `
             <button type="button" class="anexo-item anexo-baixar"
                     data-cid="${c.id}" data-aid="${a.id}" data-nome="${esc(a.nome_original)}">
-                <span>📎 ${esc(a.nome_original)}</span>
+                <span>${ehImagem(a.nome_original) ? '🖼️' : '📎'} ${esc(a.nome_original)}</span>
                 <span style="color:var(--cor-primaria);font-weight:600;">baixar</span>
             </button>`).join('');
-        return `<div class="detalhe-linha"><div class="rot">Anexos (${c.anexos.length})</div>${itens}</div>`;
+        return `<div class="detalhe-linha"><div class="rot">Anexos (${c.anexos.length})</div>
+            ${thumbs ? `<div class="anexo-thumbs">${thumbs}</div>` : ''}${itens}</div>`;
+    }
+
+    // Carrega (sob demanda) as miniaturas de imagem visíveis no modal aberto.
+    async function carregarThumbsAnexos() {
+        const imgs = document.querySelectorAll('#modal-corpo img[data-thumb]:not([data-carregando])');
+        imgs.forEach(async img => {
+            if (img.getAttribute('src')) return;
+            img.dataset.carregando = '1';
+            const [cid, aid] = img.dataset.thumb.split('-');
+            try {
+                const blob = await API.baixarAnexo(+cid, +aid);
+                img.src = URL.createObjectURL(blob);
+            } catch (_) { const w = img.closest('.anexo-thumb'); if (w) w.remove(); }
+        });
+    }
+    // Observa o corpo do modal: ao renderizar anexos, dispara o carregamento das miniaturas.
+    const _modalCorpo = document.getElementById('modal-corpo');
+    if (_modalCorpo) new MutationObserver(() => carregarThumbsAnexos())
+        .observe(_modalCorpo, { childList: true, subtree: true });
+
+    function abrirLightbox(src, nome) {
+        let lb = document.getElementById('lightbox');
+        if (!lb) {
+            lb = document.createElement('div');
+            lb.id = 'lightbox'; lb.className = 'lightbox';
+            lb.innerHTML = `<button class="lightbox-fechar" aria-label="Fechar">&times;</button>
+                <figure><img alt=""><figcaption></figcaption></figure>`;
+            lb.addEventListener('click', e => {
+                if (e.target === lb || e.target.classList.contains('lightbox-fechar')) lb.style.display = 'none';
+            });
+            document.body.appendChild(lb);
+        }
+        lb.querySelector('img').src = src;
+        lb.querySelector('figcaption').textContent = nome || '';
+        lb.style.display = 'flex';
     }
 
     async function baixarAnexoArquivo(cid, aid, nome) {
@@ -396,8 +530,14 @@
         } catch (e) { alert(e.message); }
     }
     document.addEventListener('click', e => {
-        const btn = e.target.closest ? e.target.closest('.anexo-baixar') : null;
-        if (btn) baixarAnexoArquivo(+btn.dataset.cid, +btn.dataset.aid, btn.dataset.nome);
+        if (!e.target.closest) return;
+        const baixar = e.target.closest('.anexo-baixar');
+        if (baixar) { baixarAnexoArquivo(+baixar.dataset.cid, +baixar.dataset.aid, baixar.dataset.nome); return; }
+        const thumb = e.target.closest('.anexo-thumb');
+        if (thumb) {
+            const img = thumb.querySelector('img');
+            if (img && img.getAttribute('src')) abrirLightbox(img.src, thumb.dataset.nome);
+        }
     });
 
     async function abrirModalUsuario(id) {
@@ -514,12 +654,17 @@
             gravidade: document.getElementById('filtro-gravidade').value,
             categoria: document.getElementById('filtro-categoria').value,
             sla: document.getElementById('filtro-sla').value,
+            tag: document.getElementById('filtro-tag').value.trim(),
             de: document.getElementById('filtro-de').value,
             ate: document.getElementById('filtro-ate').value,
             busca: document.getElementById('filtro-busca').value.trim(),
             limite: TAM_PAGINA,
             offset: paginaGestao * TAM_PAGINA,
         };
+        // Sub-aba "Minha fila": só chamados atribuídos ao usuário logado.
+        if (gestaoMinhaFila) filtros.atribuido = usuario.id;
+        const tituloGestao = document.getElementById('titulo-gestao');
+        if (tituloGestao) tituloGestao.textContent = gestaoMinhaFila ? 'Minha fila' : 'Gestão de chamados';
         try {
             const chamados = await API.todosChamados(filtros);
             document.getElementById('pg-info').textContent = `Página ${paginaGestao + 1}`;
@@ -650,9 +795,15 @@
                     <div class="campo"><textarea id="m-solucao" placeholder="Solução aplicada" style="min-height:60px;">${esc(c.solucao_aplicada || '')}</textarea></div>
                     <div class="campo"><textarea id="m-preventiva" placeholder="Ação preventiva" style="min-height:60px;">${esc(c.acao_preventiva || '')}</textarea></div>
                 </div>
+                <div class="detalhe-linha"><div class="rot">Etiquetas (tags)</div>
+                    <div id="m-tags-chips" style="margin-bottom:8px;"></div>
+                    <div class="barra-ferramentas">
+                        <input type="text" id="m-tag-nova" placeholder="nova etiqueta + Enter" style="width:220px;">
+                    </div>
+                </div>
             </div>
 
-            <!-- ABA: CONHECIMENTO (similares + KB + promover) -->
+            <!-- ABA: CONHECIMENTO (similares + KB + promover + mesclar) -->
             <div class="aba-painel" id="painel-conhecimento" style="display:none;">
                 <div class="detalhe-linha"><div class="rot">Chamados similares (IA / FTS)</div>
                     <div id="m-similares"><span style="color:var(--cor-texto-suave);">Buscando...</span></div></div>
@@ -666,6 +817,13 @@
                     <div class="campo"><input id="m-art-titulo" placeholder="Título do artigo" value="${esc(c.titulo)}"></div>
                     <div class="campo"><textarea id="m-art-conteudo" placeholder="Solução / passos para resolver..." style="min-height:80px;">${esc(c.solucao_aplicada || '')}</textarea></div>
                     <button class="btn btn-secundario btn-mini" id="m-art-criar">Salvar na base de conhecimento</button></div>
+                <div class="detalhe-linha"><div class="rot">Mesclar duplicado</div>
+                    <div class="ajuda" style="margin-bottom:8px;">Marca ESTE chamado como duplicado e move tudo para o chamado de destino.</div>
+                    <div class="barra-ferramentas">
+                        <input type="number" id="m-merge-destino" placeholder="ID do chamado destino" style="width:200px;">
+                        <button class="btn btn-fantasma btn-mini" id="m-merge-btn" style="color:var(--grav-alta);border-color:var(--grav-alta);">Mesclar neste</button>
+                    </div>
+                </div>
             </div>
 
             <!-- ABA: HISTÓRICO -->
@@ -726,6 +884,41 @@
                 await API.promoverArtigo(id, titulo, conteudo);
                 alertaModal('Artigo salvo na base de conhecimento.');
                 document.getElementById('modal-alerta').className = 'alerta sucesso visivel';
+            } catch (e) { alertaModal(e.message); }
+        });
+
+        // --- Tags (etiquetas) ---
+        let tagsAtuais = [...(c.tags || [])];
+        function renderTags() {
+            document.getElementById('m-tags-chips').innerHTML = tagsAtuais.length
+                ? tagsAtuais.map(t => `<span class="tag-chip">${esc(t)} <span class="x" data-tag="${esc(t)}">×</span></span>`).join('')
+                : '<span style="color:var(--cor-texto-suave);font-size:13px;">Sem etiquetas.</span>';
+            document.querySelectorAll('#m-tags-chips .x').forEach(x =>
+                x.addEventListener('click', () => salvarTags(tagsAtuais.filter(t => t !== x.dataset.tag))));
+        }
+        async function salvarTags(novas) {
+            try { const det = await API.definirTags(id, novas); tagsAtuais = det.tags || []; renderTags(); }
+            catch (e) { alertaModal(e.message); }
+        }
+        renderTags();
+        document.getElementById('m-tag-nova').addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const nova = e.target.value.trim().toLowerCase();
+                if (nova && !tagsAtuais.includes(nova)) salvarTags([...tagsAtuais, nova]);
+                e.target.value = '';
+            }
+        });
+
+        // --- Mesclar duplicado ---
+        document.getElementById('m-merge-btn').addEventListener('click', async () => {
+            const destino = parseInt(document.getElementById('m-merge-destino').value, 10);
+            if (!destino) return alertaModal('Informe o ID do chamado de destino.');
+            if (!confirm(`Mesclar este chamado no #${destino}? Este será cancelado.`)) return;
+            try {
+                const principal = await API.mesclarChamado(id, destino);
+                fecharModal(); carregarGestao();
+                abrirModalAdmin(principal.id);
             } catch (e) { alertaModal(e.message); }
         });
 
@@ -790,10 +983,11 @@
         const f = document.getElementById('filtro-busca');
         if (f) {
             f.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(recarregar, 350); });
+            document.getElementById('filtro-tag').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(recarregar, 350); });
             ['filtro-status', 'filtro-gravidade', 'filtro-categoria', 'filtro-sla', 'filtro-de', 'filtro-ate']
                 .forEach(id => document.getElementById(id).addEventListener('change', recarregar));
             document.getElementById('btn-limpar-filtros').addEventListener('click', () => {
-                ['filtro-busca', 'filtro-status', 'filtro-gravidade', 'filtro-categoria', 'filtro-sla', 'filtro-de', 'filtro-ate']
+                ['filtro-busca', 'filtro-status', 'filtro-gravidade', 'filtro-categoria', 'filtro-sla', 'filtro-tag', 'filtro-de', 'filtro-ate']
                     .forEach(id => document.getElementById(id).value = '');
                 recarregar();
             });
@@ -1149,6 +1343,13 @@
         document.getElementById('modal-corpo').innerHTML = `
             <div class="detalhe-descricao">${esc(a.conteudo)}</div>
             ${a.chamado_origem_id ? `<div class="ajuda" style="margin-top:10px;">Origem: chamado #${a.chamado_origem_id}</div>` : ''}
+            <div class="detalhe-linha" style="margin-top:16px;">
+                <div class="rot">Isso resolveu seu problema?</div>
+                <div class="voto-kb">
+                    <button class="voto-btn ${a.meu_voto === true ? 'ativo' : ''}" id="voto-sim">👍 <span id="voto-uteis">${a.uteis}</span></button>
+                    <button class="voto-btn ${a.meu_voto === false ? 'ativo' : ''}" id="voto-nao">👎 <span id="voto-naouteis">${a.nao_uteis}</span></button>
+                </div>
+            </div>
             <div id="modal-alerta" class="alerta"></div>`;
         document.getElementById('modal-rodape').innerHTML = ehAdmin
             ? `<button class="btn btn-perigo btn-mini" id="art-excluir">Excluir</button>
@@ -1157,6 +1358,17 @@
                <button class="btn btn-primario" id="art-editar">Editar</button>`
             : `<button class="btn btn-secundario" id="art-fechar">Fechar</button>`;
         document.getElementById('art-fechar').addEventListener('click', fecharModal);
+        async function votar(util) {
+            try {
+                const r = await API.kbVotar(id, util);
+                document.getElementById('voto-uteis').textContent = r.uteis;
+                document.getElementById('voto-naouteis').textContent = r.nao_uteis;
+                document.getElementById('voto-sim').classList.toggle('ativo', r.meu_voto === true);
+                document.getElementById('voto-nao').classList.toggle('ativo', r.meu_voto === false);
+            } catch (e) { alertaModal(e.message); }
+        }
+        document.getElementById('voto-sim').addEventListener('click', () => votar(true));
+        document.getElementById('voto-nao').addEventListener('click', () => votar(false));
         if (ehAdmin) {
             document.getElementById('art-editar').addEventListener('click', () => abrirEditorArtigo(a));
             document.getElementById('art-excluir').addEventListener('click', async () => {
@@ -1288,6 +1500,7 @@
             d.csat_medio !== null ? `${d.csat_medio} ★` : 'Sem dados';
         document.getElementById('kpi-sla-cumprido').textContent =
             d.sla_cumprimento !== null && d.sla_cumprimento !== undefined ? `${d.sla_cumprimento}%` : 'Sem dados';
+        document.getElementById('kpi-deflexoes').textContent = d.deflexoes ?? 0;
 
         const gl = ['Baixa', 'Média', 'Alta', 'Crítica'];
         desenharDoughnut('gravidade', 'g-gravidade', gl, gl.map(l => d.por_gravidade[l] || 0), gl.map(l => COR.gravidade[l]));
@@ -1425,7 +1638,372 @@
         mostrarModal();
     }
 
+    // ================================================================== //
+    // SININHO DE NOTIFICAÇÕES
+    // ================================================================== //
+    function initSino() {
+        const $sino = document.getElementById('btn-sino');
+        const $painel = document.getElementById('sino-painel');
+        const $badge = document.getElementById('sino-badge');
+        const $lista = document.getElementById('sino-lista');
+
+        async function atualizarBadge() {
+            try {
+                const { nao_lidas } = await API.notifContagem();
+                $badge.textContent = nao_lidas;
+                $badge.style.display = nao_lidas ? '' : 'none';
+            } catch (e) { /* silencioso */ }
+        }
+        async function abrirPainel() {
+            $lista.innerHTML = '<div class="sino-vazio">Carregando...</div>';
+            $painel.style.display = 'block';
+            try {
+                const ns = await API.notificacoes();
+                if (!ns.length) { $lista.innerHTML = '<div class="sino-vazio">Nenhuma notificação.</div>'; return; }
+                $lista.innerHTML = ns.map(n => `
+                    <div class="notif ${n.lida ? '' : 'nao-lida'}" data-id="${n.id}" data-ent="${n.entidade || ''}" data-eid="${n.entidade_id || ''}">
+                        <div class="n-corpo">
+                            <div class="n-tit">${esc(n.titulo)}</div>
+                            ${n.corpo ? `<div class="n-txt">${esc(n.corpo)}</div>` : ''}
+                            <div class="n-data">${formatarData(n.criado_em)}</div>
+                        </div>
+                        <button class="n-apagar" data-id="${n.id}" title="Apagar">×</button>
+                    </div>`).join('');
+                $lista.querySelectorAll('.notif').forEach(el => {
+                    el.addEventListener('click', async (ev) => {
+                        if (ev.target.classList.contains('n-apagar')) return;
+                        try { await API.notifLida(+el.dataset.id); } catch (e) {}
+                        el.classList.remove('nao-lida'); atualizarBadge();
+                        // Navega ao chamado relacionado, se aplicável.
+                        if (el.dataset.ent === 'chamado' && el.dataset.eid) {
+                            $painel.style.display = 'none';
+                            if (ehAdmin) { navegar('gestao'); abrirModalAdmin(+el.dataset.eid); }
+                            else { navegar('meus'); abrirModalUsuario(+el.dataset.eid); }
+                        }
+                    });
+                });
+                $lista.querySelectorAll('.n-apagar').forEach(b =>
+                    b.addEventListener('click', async (ev) => {
+                        ev.stopPropagation();
+                        try { await API.notifApagar(+b.dataset.id); } catch (e) {}
+                        b.closest('.notif').remove(); atualizarBadge();
+                    }));
+            } catch (e) { $lista.innerHTML = `<div class="sino-vazio">${esc(e.message)}</div>`; }
+        }
+        $sino.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if ($painel.style.display === 'block') { $painel.style.display = 'none'; }
+            else abrirPainel();
+        });
+        document.addEventListener('click', e => {
+            if (!e.target.closest('.sino-wrap')) $painel.style.display = 'none';
+        });
+        document.getElementById('sino-lidas').addEventListener('click', async () => {
+            try { await API.notifTodasLidas(); abrirPainel(); atualizarBadge(); } catch (e) {}
+        });
+        document.getElementById('sino-limpar').addEventListener('click', async () => {
+            try { await API.notifApagarTodas(); abrirPainel(); atualizarBadge(); } catch (e) {}
+        });
+        atualizarBadge();
+        setInterval(atualizarBadge, 30000);  // poll a cada 30s
+    }
+
+    // ================================================================== //
+    // MEU PERFIL
+    // ================================================================== //
+    function abrirPerfil() {
+        document.getElementById('modal-titulo').textContent = 'Meu perfil';
+        document.getElementById('modal-corpo').innerHTML = `
+            <div class="detalhe-linha detalhe-grade">
+                <div><div class="rot">Nome</div><div class="val">${esc(usuario.nome)}</div></div>
+                <div><div class="rot">Papel</div><div class="val">${esc(ROTULO_PAPEL[papel] || '—')}</div></div>
+            </div>
+            <div class="linha-campos">
+                <div class="campo"><label>E-mail</label><input id="perf-email" placeholder="voce@empresa.com"></div>
+                <div class="campo"><label>Ramal</label><input id="perf-ramal"></div>
+            </div>
+            <button class="btn btn-secundario btn-mini" id="perf-salvar">Salvar contato</button>
+            <div class="detalhe-linha" style="margin-top:18px;border-top:1px solid var(--cor-borda);padding-top:14px;">
+                <button class="btn btn-fantasma btn-mini" id="perf-senha">Trocar minha senha</button>
+            </div>
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML = `<button class="btn btn-secundario" id="perf-fechar">Fechar</button>`;
+        document.getElementById('perf-fechar').addEventListener('click', fecharModal);
+        // Preenche e-mail/ramal atuais.
+        API.me().then(u => {
+            document.getElementById('perf-email').value = u.email || '';
+            document.getElementById('perf-ramal').value = u.ramal || '';
+        }).catch(() => {});
+        document.getElementById('perf-salvar').addEventListener('click', async () => {
+            try {
+                await API.atualizarPerfil({
+                    email: document.getElementById('perf-email').value.trim(),
+                    ramal: document.getElementById('perf-ramal').value.trim(),
+                });
+                alertaModal('Contato atualizado.'); document.getElementById('modal-alerta').className = 'alerta sucesso visivel';
+            } catch (e) { alertaModal(e.message); }
+        });
+        document.getElementById('perf-senha').addEventListener('click', () => abrirTrocaSenha(false));
+        mostrarModal();
+    }
+
+    // ================================================================== //
+    // MODELOS DE CHAMADO (admin)
+    // ================================================================== //
+    async function carregarModelos() {
+        const corpo = document.getElementById('corpo-modelos');
+        corpo.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;">Carregando...</td></tr>`;
+        try {
+            const ms = await API.templatesAdmin();
+            const cats = await garantirCategorias();
+            const mapaCat = {}; cats.forEach(c => mapaCat[c.id] = c.nome);
+            corpo.innerHTML = '';
+            ms.forEach(m => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${esc(m.nome)}</strong></td>
+                    <td>${esc(mapaCat[m.categoria_id] || '—')}</td>
+                    <td>${esc(ROTULO_IMPACTO[m.impacto_negocio] || '—')}</td>
+                    <td>${m.ativo ? '<span class="sla-chip sla-ok">Ativo</span>' : '<span class="sla-chip sla-vencido">Inativo</span>'}</td>
+                    <td style="display:flex;gap:6px;">
+                        <button class="btn-mini b-ed">Editar</button>
+                        <button class="btn-mini b-ex" style="background:var(--grav-critica-bg);color:var(--grav-critica);">Excluir</button>
+                    </td>`;
+                tr.querySelector('.b-ed').addEventListener('click', () => abrirEditorModelo(m));
+                tr.querySelector('.b-ex').addEventListener('click', async () => {
+                    if (!confirm(`Excluir o modelo "${m.nome}"?`)) return;
+                    try { await API.templateExcluir(m.id); carregarModelos(); } catch (e) { alert(e.message); }
+                });
+                corpo.appendChild(tr);
+            });
+        } catch (e) {
+            corpo.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;color:#b3261e;">${esc(e.message)}</td></tr>`;
+        }
+    }
+
+    // ================================================================== //
+    // CATEGORIAS / SUBCATEGORIAS (admin) — gestão da taxonomia
+    // ================================================================== //
+    async function carregarCategoriasAdmin() {
+        const wrap = document.getElementById('lista-categorias');
+        if (!wrap) return;
+        wrap.innerHTML = '<p style="padding:20px;color:var(--cor-texto-suave);">Carregando...</p>';
+        try {
+            const cats = await API.categorias();
+            wrap.innerHTML = '';
+            if (!cats.length) {
+                wrap.innerHTML = '<div class="vazio"><div class="ico-grande">🗂️</div>Nenhuma categoria cadastrada.</div>';
+                return;
+            }
+            cats.forEach(cat => {
+                const card = document.createElement('div');
+                card.className = 'painel cat-card';
+                const subs = (cat.subcategorias || []);
+                card.innerHTML = `
+                    <div class="cat-cab">
+                        <strong>${esc(cat.nome)}</strong>
+                        ${cat.ativo ? '' : '<span class="sla-chip sla-vencido">inativa</span>'}
+                        <span class="cat-conta">${subs.length} subcategoria(s)</span>
+                    </div>
+                    <div class="cat-subs">
+                        ${subs.length ? subs.map(s => `<span class="tag-chip">${esc(s.nome)}</span>`).join('')
+                            : '<span style="color:var(--cor-texto-suave);font-size:13px;">Sem subcategorias.</span>'}
+                    </div>
+                    <div class="cat-add">
+                        <input type="text" class="cat-sub-nome" placeholder="Nova subcategoria..." maxlength="80">
+                        <button class="btn btn-fantasma btn-mini cat-sub-add">+ Adicionar</button>
+                    </div>`;
+                card.querySelector('.cat-sub-add').addEventListener('click', async () => {
+                    const inp = card.querySelector('.cat-sub-nome');
+                    const nome = inp.value.trim();
+                    if (nome.length < 2) { inp.focus(); return; }
+                    try {
+                        await API.criarSubcategoria(nome, cat.id);
+                        categoriasCache = [];
+                        carregarCategoriasAdmin();
+                    } catch (e) { alert(e.message); }
+                });
+                wrap.appendChild(card);
+            });
+        } catch (e) {
+            wrap.innerHTML = `<p style="padding:20px;color:#b3261e;">${esc(e.message)}</p>`;
+        }
+    }
+    (() => {
+        const b = document.getElementById('btn-nova-categoria');
+        if (b) b.addEventListener('click', async () => {
+            const nome = (prompt('Nome da nova categoria:') || '').trim();
+            if (nome.length < 2) return;
+            try {
+                await API.criarCategoria(nome);
+                categoriasCache = [];
+                carregarCategoriasAdmin();
+            } catch (e) { alert(e.message); }
+        });
+    })();
+
+    async function abrirEditorModelo(m) {
+        const ed = !!m;
+        const cats = await garantirCategorias();
+        document.getElementById('modal-titulo').textContent = ed ? 'Editar modelo' : 'Novo modelo';
+        const optsCat = '<option value="">Sem categoria</option>' +
+            cats.map(c => `<option value="${c.id}" ${ed && m.categoria_id == c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('');
+        const optsImp = ['', 'baixo', 'medio', 'alto', 'critico']
+            .map(i => `<option value="${i}" ${ed && (m.impacto_negocio || '') === i ? 'selected' : ''}>${i ? ROTULO_IMPACTO[i] : '—'}</option>`).join('');
+        document.getElementById('modal-corpo').innerHTML = `
+            <div class="campo"><label>Nome do modelo</label><input id="md-nome" value="${ed ? esc(m.nome) : ''}"></div>
+            <div class="campo"><label>Título sugerido</label><input id="md-titulo" value="${ed ? esc(m.titulo || '') : ''}"></div>
+            <div class="campo"><label>Descrição pré-preenchida</label><textarea id="md-desc" style="min-height:100px;">${ed ? esc(m.descricao || '') : ''}</textarea></div>
+            <div class="linha-campos">
+                <div class="campo"><label>Categoria</label><select id="md-cat">${optsCat}</select></div>
+                <div class="campo"><label>Impacto</label><select id="md-imp">${optsImp}</select></div>
+            </div>
+            <div class="campo"><label>Sistema afetado</label><input id="md-sis" value="${ed ? esc(m.sistema_afetado || '') : ''}"></div>
+            ${ed ? `<div class="campo"><label>Situação</label><select id="md-ativo"><option value="1" ${m.ativo ? 'selected' : ''}>Ativo</option><option value="0" ${!m.ativo ? 'selected' : ''}>Inativo</option></select></div>` : ''}
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML = `
+            <button class="btn btn-fantasma" id="md-cancelar">Cancelar</button>
+            <button class="btn btn-primario" id="md-salvar">Salvar</button>`;
+        document.getElementById('md-cancelar').addEventListener('click', fecharModal);
+        document.getElementById('md-salvar').addEventListener('click', async () => {
+            const v = id => document.getElementById(id) ? document.getElementById(id).value.trim() : '';
+            const dados = {
+                nome: v('md-nome'), titulo: v('md-titulo') || null, descricao: v('md-desc') || null,
+                categoria_id: v('md-cat') ? +v('md-cat') : null,
+                impacto_negocio: v('md-imp') || null,
+                sistema_afetado: v('md-sis') || null,
+                ativo: ed ? v('md-ativo') === '1' : true,
+            };
+            if (dados.nome.length < 3) return alertaModal('Nome do modelo muito curto.');
+            try {
+                if (ed) await API.templateAtualizar(m.id, dados); else await API.templateCriar(dados);
+                fecharModal(); carregarModelos();
+            } catch (e) { alertaModal(e.message); }
+        });
+        mostrarModal();
+    }
+
+    // ================================================================== //
+    // CONFIGURAÇÕES DE SLA (admin) — feriados em calendário
+    // ================================================================== //
+    let feriadosMap = {};
+    let calMes = new Date();  // primeiro dia do mês exibido
+    const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+        'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    async function carregarConfig() {
+        const form = document.getElementById('config-sla-form');
+        form.innerHTML = 'Carregando...';
+        try {
+            const cfg = await API.configSla();
+            form.innerHTML = [1, 2, 3, 4, 5].map(p => `
+                <div class="campo linha-campos" style="grid-template-columns:auto 120px;align-items:center;">
+                    <label style="margin:0;">Prioridade ${p}</label>
+                    <input type="number" min="1" class="cfg-h" data-p="${p}" value="${cfg.horas_por_prioridade[p] ?? ''}">
+                </div>`).join('');
+            feriadosMap = {};
+            (cfg.feriados || []).forEach(f => { feriadosMap[f.data] = f.descricao || ''; });
+            // Posiciona o calendário no mês de hoje na primeira carga.
+            calMes = new Date();
+            renderCalendario();
+        } catch (e) { form.innerHTML = `<span style="color:#b3261e;">${esc(e.message)}</span>`; }
+    }
+
+    function renderCalendario() {
+        const cal = document.getElementById('calendario');
+        if (!cal) return;
+        const ano = calMes.getFullYear(), mes = calMes.getMonth();
+        const hoje = iso(new Date());
+        document.getElementById('cal-titulo').textContent = `${MESES[mes]} ${ano}`;
+        document.getElementById('cal-add').style.display = 'none';
+
+        let html = DOW.map(d => `<div class="cal-dow">${d}</div>`).join('');
+        const primeiroDow = new Date(ano, mes, 1).getDay();
+        const diasNoMes = new Date(ano, mes + 1, 0).getDate();
+        for (let i = 0; i < primeiroDow; i++) html += '<div class="cal-dia vazio"></div>';
+        for (let dia = 1; dia <= diasNoMes; dia++) {
+            const d = new Date(ano, mes, dia);
+            const data = iso(d);
+            const ehFds = d.getDay() === 0 || d.getDay() === 6;
+            const ehFer = data in feriadosMap;
+            const cls = ['cal-dia', ehFds ? 'fds' : '', ehFer ? 'feriado' : '', data === hoje ? 'hoje' : ''].filter(Boolean).join(' ');
+            const titulo = ehFer ? esc(feriadosMap[data] || 'Feriado') : '';
+            html += `<div class="${cls}" data-data="${data}" title="${titulo}">${dia}</div>`;
+        }
+        cal.innerHTML = html;
+        cal.querySelectorAll('.cal-dia[data-data]').forEach(el =>
+            el.addEventListener('click', () => cliqueDia(el.dataset.data, el)));
+    }
+
+    async function cliqueDia(data, el) {
+        if (data in feriadosMap) {
+            if (!confirm(`Remover o feriado "${feriadosMap[data] || ''}" (${data})?`)) return;
+            try { await API.removerFeriado(data); delete feriadosMap[data]; renderCalendario(); }
+            catch (e) { alert(e.message); }
+            return;
+        }
+        // Dia livre: abre o mini-formulário para marcar.
+        document.querySelectorAll('.cal-dia.sel').forEach(s => s.classList.remove('sel'));
+        el.classList.add('sel');
+        const box = document.getElementById('cal-add');
+        box.style.display = 'flex';
+        box.innerHTML = `
+            <span>Marcar <strong>${data}</strong>:</span>
+            <input type="text" id="cal-desc" placeholder="Descrição (opcional)" style="flex:1;min-width:160px;">
+            <button class="btn btn-primario btn-mini" id="cal-confirma">Adicionar feriado</button>
+            <button class="btn btn-fantasma btn-mini" id="cal-cancela">Cancelar</button>`;
+        const desc = document.getElementById('cal-desc');
+        desc.focus();
+        const confirmar = async () => {
+            try {
+                await API.adicionarFeriado(data, desc.value.trim());
+                feriadosMap[data] = desc.value.trim();
+                renderCalendario();
+            } catch (e) { alert(e.message); }
+        };
+        document.getElementById('cal-confirma').addEventListener('click', confirmar);
+        desc.addEventListener('keydown', e => { if (e.key === 'Enter') confirmar(); });
+        document.getElementById('cal-cancela').addEventListener('click', () => {
+            box.style.display = 'none'; el.classList.remove('sel');
+        });
+    }
+
+    if (ehAdmin) {
+        const bnm = document.getElementById('btn-novo-modelo');
+        if (bnm) bnm.addEventListener('click', () => abrirEditorModelo(null));
+        const bss = document.getElementById('btn-salvar-sla');
+        if (bss) bss.addEventListener('click', async () => {
+            const itens = [...document.querySelectorAll('.cfg-h')].map(i => ({ prioridade: +i.dataset.p, horas: +i.value }));
+            try { await API.salvarConfigSla(itens); alert('Horas de SLA salvas.'); } catch (e) { alert(e.message); }
+        });
+        const cp = document.getElementById('cal-prev');
+        if (cp) cp.addEventListener('click', () => { calMes.setMonth(calMes.getMonth() - 1); renderCalendario(); });
+        const cn = document.getElementById('cal-prox');
+        if (cn) cn.addEventListener('click', () => { calMes.setMonth(calMes.getMonth() + 1); renderCalendario(); });
+    }
+
+    // --- Busca global (topo) ---
+    // Admin: abre a Gestão já filtrada. Demais: filtra "Meus chamados".
+    const formBusca = document.getElementById('form-busca-global');
+    if (formBusca) formBusca.addEventListener('submit', e => {
+        e.preventDefault();
+        const termo = document.getElementById('busca-global').value.trim();
+        if (ehAdmin) {
+            const fb = document.getElementById('filtro-busca');
+            if (fb) fb.value = termo;
+            paginaGestao = 0;
+            navegar('gestao');
+        } else {
+            buscaMeusTexto = termo;
+            navegar('meus');
+        }
+    });
+
     // --- Inicialização ---
+    initSino();
+    document.getElementById('btn-perfil').addEventListener('click', abrirPerfil);
     navegar(ehAdmin ? 'dashboard' : 'abrir');
     // Primeiro acesso com senha provisória: força a troca antes de usar o sistema.
     if (usuario.senhaProvisoria) abrirTrocaSenha(true);

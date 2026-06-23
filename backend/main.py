@@ -28,6 +28,7 @@ from app.routers.admin import router as router_admin
 from app.routers.auth import router as router_auth
 from app.routers.chamados import router as router_chamados
 from app.routers.kb import router as router_kb
+from app.routers.notificacoes import router as router_notificacoes
 from app.routers.usuarios import router as router_usuarios
 
 # Logging estruturado básico (em produção, troque por handler JSON).
@@ -79,7 +80,7 @@ async def cabecalhos_seguranca(request: Request, call_next):
         "default-src 'self'; "
         "script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
         "connect-src 'self'"
     )
     return response
@@ -108,6 +109,7 @@ app.include_router(router_chamados)
 app.include_router(router_admin)
 app.include_router(router_usuarios)
 app.include_router(router_kb)
+app.include_router(router_notificacoes)
 
 
 # --------------------------------------------------------------------------- #
@@ -130,11 +132,3 @@ def pagina_app():
 def health_check():
     """Endpoint simples para monitoramento de disponibilidade."""
     return {"status": "ok"}
-
-
-@app.on_event("startup")
-def _iniciar_jobs():
-    """Sobe o verificador de SLA em background (escalonamento automático)."""
-    from app.services import escalonamento
-    escalonamento.iniciar_em_background()
-    logger.info("Jobs de background iniciados (escalonamento de SLA).")

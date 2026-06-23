@@ -15,24 +15,65 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from app.services import auditoria
 from app.services import busca
 from app.security.auth import exigir_admin, ip_requisicao, obter_usuario_atual
 from app.database import get_db
-from app.models import Artigo, Usuario
-from app.schemas import ArtigoAtualizar, ArtigoCriar, ArtigoResposta
+from app.models import Artigo, ArtigoVoto, Usuario
+from app.schemas import (
+    ArtigoAtualizar,
+    ArtigoCriar,
+    ArtigoResposta,
+    ArtigoVotoRequest,
+)
 
 router = APIRouter(prefix="/api/kb", tags=["Base de conhecimento"])
 
 
-@router.get("")
+def _votos(db: Session, ids: list[int], usuario_id: int):
+    """Retorna {id: (uteis, nao_uteis)} e {id: meu_voto} para os artigos dados."""
+    if not ids:
+        return {}, {}
+    contagem = {}
+    for aid, util, qtd in (
+        db.query(ArtigoVoto.artigo_id, ArtigoVoto.util, func.count(ArtigoVoto.id))
+        .filter(ArtigoVoto.artigo_id.in_(ids))
+        .group_by(ArtigoVoto.artigo_id, ArtigoVoto.util).all()
+    ):
+        u, n = contagem.get(aid, (0, 0))
+        contagem[aid] = (u + qtd, n) if util else (u, n + qtd)
+    meus = {
+        v.artigo_id: v.util
+        for v in db.query(ArtigoVoto).filter(
+            ArtigoVoto.artigo_id.in_(ids), ArtigoVoto.usuario_id == usuario_id
+        ).all()
+    }
+    return contagem, meus
+
+
+def _resposta(artigo: Artigo, contagem, meus) -> ArtigoResposta:
+    u, n = contagem.get(artigo.id, (0, 0))
+    r = ArtigoResposta.model_validate(artigo)
+    r.uteis, r.nao_uteis = u, n
+    r.meu_voto = meus.get(artigo.id)
+    return r
+
+
+@router.get("", response_model=list[ArtigoResposta])
 def listar(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(obter_usuario_atual),
     busca_termo: Optional[str] = Query(None, alias="busca", max_length=150),
 ):
     """Busca por relevância (FTS5); sem termo, lista os mais recentes."""
-    return busca.buscar_kb(db, busca_termo or "", limite=50)
+    achados = busca.buscar_kb(db, busca_termo or "", limite=50)
+    ids = [a["id"] for a in achados]
+    artigos = {a.id: a for a in db.query(Artigo).filter(Artigo.id.in_(ids)).all()}
+    contagem, meus = _votos(db, ids, usuario.id)
+    # Preserva a ordem de relevância do FTS.
+    return [_resposta(artigos[i], contagem, meus) for i in ids if i in artigos]
 
 
 @router.get("/{artigo_id}", response_model=ArtigoResposta)
@@ -44,7 +85,33 @@ def detalhar(
     artigo = db.get(Artigo, artigo_id)
     if artigo is None:
         raise HTTPException(404, "Artigo não encontrado.")
-    return artigo
+    contagem, meus = _votos(db, [artigo_id], usuario.id)
+    return _resposta(artigo, contagem, meus)
+
+
+@router.post("/{artigo_id}/voto", response_model=ArtigoResposta)
+def votar(
+    artigo_id: int,
+    dados: ArtigoVotoRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Registra/atualiza o voto 'isso resolveu?' (👍/👎) — 1 por usuário."""
+    artigo = db.get(Artigo, artigo_id)
+    if artigo is None:
+        raise HTTPException(404, "Artigo não encontrado.")
+    voto = (
+        db.query(ArtigoVoto)
+        .filter(ArtigoVoto.artigo_id == artigo_id, ArtigoVoto.usuario_id == usuario.id)
+        .first()
+    )
+    if voto is None:
+        db.add(ArtigoVoto(artigo_id=artigo_id, usuario_id=usuario.id, util=dados.util))
+    else:
+        voto.util = dados.util
+    db.commit()
+    contagem, meus = _votos(db, [artigo_id], usuario.id)
+    return _resposta(artigo, contagem, meus)
 
 
 @router.post("", response_model=ArtigoResposta, status_code=201)

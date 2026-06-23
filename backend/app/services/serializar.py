@@ -49,6 +49,7 @@ def serializar_detalhe(
     )
     if chamado.atribuido_a is not None:
         det.atribuido_a = AutorResumo.model_validate(chamado.atribuido_a)
+    det.tags = sorted(t.nome for t in chamado.tags)
 
     # Filtra comentários internos para quem não é da equipe.
     comentarios = sorted(chamado.comentarios, key=lambda c: c.criado_em)

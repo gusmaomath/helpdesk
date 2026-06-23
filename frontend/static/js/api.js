@@ -8,13 +8,14 @@ const API = (() => {
     const CHAVE_TOKEN = 'helpdesk_token';
     const CHAVE_USUARIO = 'helpdesk_usuario';
 
-    function salvarSessao(token, id, nome, nivel, papel, senhaProvisoria) {
+    function salvarSessao(token, id, nome, nivel, papel, senhaProvisoria, org) {
         // sessionStorage: a sessão expira ao fechar o navegador (mais seguro
         // que localStorage para um ambiente compartilhado).
         sessionStorage.setItem(CHAVE_TOKEN, token);
         sessionStorage.setItem(
             CHAVE_USUARIO,
-            JSON.stringify({ id, nome, nivel, papel, senhaProvisoria: !!senhaProvisoria })
+            JSON.stringify({ id, nome, nivel, papel, org: org || 'bradesco_bbi',
+                             senhaProvisoria: !!senhaProvisoria })
         );
     }
 
@@ -130,13 +131,27 @@ const API = (() => {
             requisitar('/api/auth/trocar-senha', {
                 method: 'POST', body: JSON.stringify({ senha_atual, nova_senha }),
             }),
+        me: () => requisitar('/api/auth/me'),
+        atualizarPerfil: (dados) =>
+            requisitar('/api/auth/perfil', { method: 'PUT', body: JSON.stringify(dados) }),
+
+        // --- Notificações (sininho) ---
+        notificacoes: () => requisitar('/api/notificacoes'),
+        notifContagem: () => requisitar('/api/notificacoes/contagem'),
+        notifLida: (id) => requisitar(`/api/notificacoes/${id}/lida`, { method: 'PUT' }),
+        notifTodasLidas: () => requisitar('/api/notificacoes/lidas', { method: 'PUT' }),
+        notifApagar: (id) => requisitar(`/api/notificacoes/${id}`, { method: 'DELETE' }),
+        notifApagarTodas: () => requisitar('/api/notificacoes', { method: 'DELETE' }),
 
         // --- Solicitante ---
         categoriasAbertura: () => requisitar('/api/chamados/categorias'),
+        templatesAbertura: () => requisitar('/api/chamados/templates'),
         deflexao: (titulo, descricao) =>
             requisitar('/api/chamados/deflexao', {
                 method: 'POST', body: JSON.stringify({ titulo, descricao }),
             }),
+        deflexaoAproveitada: () =>
+            requisitar('/api/chamados/deflexao/aproveitada', { method: 'POST' }),
         meusChamados: () => requisitar('/api/chamados'),
         minhaEquipe: () => requisitar('/api/chamados/equipe'),
         cancelarChamado: (id, motivo) =>
@@ -161,7 +176,7 @@ const API = (() => {
         // --- Equipe / admin ---
         todosChamados: (filtros = {}) => {
             const p = new URLSearchParams();
-            ['status', 'gravidade', 'categoria', 'busca', 'sla', 'atribuido', 'de', 'ate', 'limite', 'offset'].forEach(k => {
+            ['status', 'gravidade', 'categoria', 'busca', 'sla', 'atribuido', 'tag', 'de', 'ate', 'limite', 'offset'].forEach(k => {
                 if (filtros[k] !== undefined && filtros[k] !== '') p.set(k, filtros[k]);
             });
             const qs = p.toString();
@@ -180,6 +195,23 @@ const API = (() => {
         kbAtualizar: (id, dados) =>
             requisitar(`/api/kb/${id}`, { method: 'PUT', body: JSON.stringify(dados) }),
         kbExcluir: (id) => requisitar(`/api/kb/${id}`, { method: 'DELETE' }),
+        kbVotar: (id, util) =>
+            requisitar(`/api/kb/${id}/voto`, { method: 'POST', body: JSON.stringify({ util }) }),
+
+        // --- Templates / Tags / Merge ---
+        templatesAdmin: () => requisitar('/api/admin/templates'),
+        templateCriar: (dados) => requisitar('/api/admin/templates', { method: 'POST', body: JSON.stringify(dados) }),
+        templateAtualizar: (id, dados) => requisitar(`/api/admin/templates/${id}`, { method: 'PUT', body: JSON.stringify(dados) }),
+        templateExcluir: (id) => requisitar(`/api/admin/templates/${id}`, { method: 'DELETE' }),
+        tagsLista: () => requisitar('/api/admin/tags'),
+        definirTags: (id, tags) => requisitar(`/api/admin/chamados/${id}/tags`, { method: 'PUT', body: JSON.stringify({ tags }) }),
+        mesclarChamado: (id, destino_id) => requisitar(`/api/admin/chamados/${id}/mesclar`, { method: 'POST', body: JSON.stringify({ destino_id }) }),
+
+        // --- Config SLA / feriados ---
+        configSla: () => requisitar('/api/admin/config/sla'),
+        salvarConfigSla: (itens) => requisitar('/api/admin/config/sla', { method: 'PUT', body: JSON.stringify({ itens }) }),
+        adicionarFeriado: (data, descricao) => requisitar('/api/admin/config/feriados', { method: 'POST', body: JSON.stringify({ data, descricao }) }),
+        removerFeriado: (data) => requisitar(`/api/admin/config/feriados/${data}`, { method: 'DELETE' }),
 
         similares: (id) => requisitar(`/api/admin/chamados/${id}/similares`),
         promoverArtigo: (id, titulo, conteudo) =>

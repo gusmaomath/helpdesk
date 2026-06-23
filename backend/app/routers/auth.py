@@ -25,6 +25,7 @@ from app.models import NivelAcesso, Papel, Usuario
 from app.schemas import (
     AutoCadastro,
     LoginRequest,
+    PerfilAtualizar,
     TokenResponse,
     TrocarSenha,
     UsuarioResposta,
@@ -82,6 +83,7 @@ def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
         nome=usuario.nome,
         nivel_acesso=usuario.nivel_acesso,
         papel=usuario.papel,
+        organizacao=usuario.organizacao,
         senha_provisoria=bool(usuario.senha_provisoria),
     )
 
@@ -101,6 +103,7 @@ def registrar(dados: AutoCadastro, request: Request, db: Session = Depends(get_d
         senha_hash=gerar_hash_senha(dados.senha),
         nivel_acesso=NivelAcesso.USUARIO,
         papel=Papel.COLABORADOR,
+        organizacao=dados.organizacao,
         email=dados.email,
         unidade_setor=dados.unidade_setor,
         ativo=0,  # PENDENTE de aprovação
@@ -143,6 +146,22 @@ def trocar_senha(
     )
     db.commit()
     return {"detail": "Senha atualizada com sucesso."}
+
+
+@router.put("/perfil", response_model=UsuarioResposta)
+def atualizar_perfil(
+    dados: PerfilAtualizar,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Atualiza os próprios dados de contato (e-mail e ramal)."""
+    if dados.email is not None:
+        usuario.email = dados.email
+    if dados.ramal is not None:
+        usuario.ramal = dados.ramal
+    db.commit()
+    db.refresh(usuario)
+    return usuario
 
 
 @router.get("/me", response_model=UsuarioResposta)

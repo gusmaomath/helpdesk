@@ -194,7 +194,7 @@ class AnalisadorMock(AnalisadorIA):
 # Quando a IA proprietária do banco estiver pronta, além de `analisar()` ela
 # pode oferecer análises extras. Deixe a interface pronta e plugue o modelo real
 # implementando estes métodos opcionais e descomentando os pontos de chamada
-# espalhados pelo sistema (ex.: escalonamento.py, rota de "similares"/handoff):
+# espalhados pelo sistema (ex.: rota de "similares" / handoff entre níveis):
 #
 # class AnalisadorIA(ABC):
 #     def sugerir_resposta(self, chamado) -> str: ...        # copiloto do analista

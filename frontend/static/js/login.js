@@ -38,7 +38,8 @@
 
         try {
             const r = await API.login(matricula, senha);
-            API.salvarSessao(r.access_token, r.id, r.nome, r.nivel_acesso, r.papel, r.senha_provisoria);
+            API.salvarSessao(r.access_token, r.id, r.nome, r.nivel_acesso, r.papel,
+                             r.senha_provisoria, r.organizacao);
             window.location.href = '/app';
         } catch (e) {
             mostrarErro(e.message);
@@ -59,11 +60,24 @@
     const $alertaCad = document.getElementById('alerta-cad');
     const $btnCad = document.getElementById('btn-cadastrar');
 
+    // Seletor de organização (marca) no cadastro — previa a cor ao vivo.
+    function orgSelecionada() {
+        const sel = document.querySelector('input[name="cad-org"]:checked');
+        return sel ? sel.value : 'bradesco_bbi';
+    }
+    function previewMarca() {
+        if (window.Tema) window.Tema.aplicarMarca(orgSelecionada() === 'agora' ? 'agora' : 'bradesco');
+    }
+    document.querySelectorAll('input[name="cad-org"]').forEach(r =>
+        r.addEventListener('change', previewMarca));
+
     function alternar(paraCadastro) {
         $cardLogin.style.display = paraCadastro ? 'none' : 'block';
         $cardCad.style.display = paraCadastro ? 'block' : 'none';
         limparErro();
         $alertaCad.className = 'alerta';
+        // No cadastro, a cor segue a organização escolhida; no login, padrão.
+        if (window.Tema) window.Tema.aplicarMarca(paraCadastro && orgSelecionada() === 'agora' ? 'agora' : 'bradesco');
     }
     document.getElementById('link-cadastro').addEventListener('click', e => { e.preventDefault(); alternar(true); });
     document.getElementById('link-voltar-login').addEventListener('click', e => { e.preventDefault(); alternar(false); });
@@ -83,7 +97,7 @@
         $btnCad.disabled = true;
         $btnCad.innerHTML = '<span class="spinner"></span> Enviando...';
         try {
-            const dados = { nome, matricula, senha };
+            const dados = { nome, matricula, senha, organizacao: orgSelecionada() };
             const setor = v('cad-setor'); if (setor) dados.unidade_setor = setor;
             const email = v('cad-email'); if (email) dados.email = email;
             const r = await API.registrar(dados);

@@ -28,7 +28,9 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -47,6 +49,12 @@ class NivelAcesso(str, enum.Enum):
     """Mantido por compatibilidade: distingue acesso ao painel admin."""
     USUARIO = "usuario"
     ADMINISTRADOR = "administrador"
+
+
+class Organizacao(str, enum.Enum):
+    """Marca/instituição do usuário — define o esquema de cores da interface."""
+    BRADESCO_BBI = "bradesco_bbi"   # vinho (#800000) — padrão
+    AGORA = "agora"                 # verde-petróleo (Ágora Investimentos)
 
 
 class Papel(str, enum.Enum):
@@ -132,6 +140,12 @@ class Usuario(Base):
     )
     papel = Column(Enum(Papel), default=Papel.COLABORADOR, nullable=False, index=True)
 
+    # Marca/instituição: define o esquema de cores (Bradesco BBI vinho / Ágora verde).
+    organizacao = Column(
+        Enum(Organizacao), default=Organizacao.BRADESCO_BBI,
+        server_default=Organizacao.BRADESCO_BBI.value, nullable=False, index=True,
+    )
+
     # Auto-relação: "alguém acima de você".
     supervisor_id = Column(
         Integer, ForeignKey("usuarios.id"), nullable=True, index=True
@@ -191,6 +205,21 @@ class Subcategoria(Base):
     ativo = Column(Boolean, default=True, nullable=False)
 
     categoria = relationship("Categoria", back_populates="subcategorias")
+
+
+# Etiquetas livres (many-to-many) — flexibilidade além da categoria.
+chamado_tags = Table(
+    "chamado_tags",
+    Base.metadata,
+    Column("chamado_id", ForeignKey("chamados.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String(40), unique=True, nullable=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -264,8 +293,6 @@ class Chamado(Base):
     sla_segundos_pausado = Column(Integer, default=0, nullable=False)
     # Marca quando entrou no estado pausado (para somar ao despausar).
     sla_pausado_em = Column(DateTime(timezone=True), nullable=True)
-    # Carimbo de quando o SLA vencido já foi escalado (evita notificar em loop).
-    sla_escalado_em = Column(DateTime(timezone=True), nullable=True)
 
     # --- Timestamps ---
     criado_em = Column(
@@ -279,6 +306,8 @@ class Chamado(Base):
     # --- Controle de concorrência e soft-delete ---
     versao_linha = Column(Integer, default=1, nullable=False)  # optimistic lock
     excluido_em = Column(DateTime(timezone=True), nullable=True)  # soft delete
+    # Se foi mesclado em outro chamado, guarda o id do principal (rastreabilidade).
+    mesclado_em_id = Column(Integer, ForeignKey("chamados.id"), nullable=True)
 
     comentarios = relationship(
         "Comentario", back_populates="chamado", cascade="all, delete-orphan"
@@ -290,6 +319,7 @@ class Chamado(Base):
         "Avaliacao", back_populates="chamado", uselist=False,
         cascade="all, delete-orphan",
     )
+    tags = relationship("Tag", secondary=chamado_tags)
 
     @property
     def excluido(self) -> bool:
@@ -417,3 +447,67 @@ class RegistroRate(Base):
     criado_em = Column(
         DateTime(timezone=True), default=agora_utc, nullable=False, index=True
     )
+
+
+# --------------------------------------------------------------------------- #
+# Notificações in-app (por usuário) — alimentam o "sininho" do topo.
+# --------------------------------------------------------------------------- #
+class Notificacao(Base):
+    __tablename__ = "notificacoes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    titulo = Column(String(160), nullable=False)
+    corpo = Column(Text, nullable=True)
+    lida = Column(Boolean, default=False, nullable=False, index=True)
+    # Para navegar ao clicar (ex.: "chamado" + id).
+    entidade = Column(String(40), nullable=True)
+    entidade_id = Column(Integer, nullable=True)
+    criado_em = Column(
+        DateTime(timezone=True), default=agora_utc, nullable=False, index=True
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Voto de utilidade de artigo da KB ("isso resolveu?") — 1 por usuário/artigo.
+# --------------------------------------------------------------------------- #
+class ArtigoVoto(Base):
+    __tablename__ = "artigo_votos"
+    __table_args__ = (UniqueConstraint("artigo_id", "usuario_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    artigo_id = Column(Integer, ForeignKey("artigos.id"), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    util = Column(Boolean, nullable=False)  # True=👍, False=👎
+
+
+# --------------------------------------------------------------------------- #
+# Templates de chamado (formulários pré-preenchidos para pedidos comuns).
+# --------------------------------------------------------------------------- #
+class Template(Base):
+    __tablename__ = "templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String(120), nullable=False)        # rótulo (ex.: "Solicitar acesso")
+    titulo = Column(String(150), nullable=True)        # título sugerido do chamado
+    descricao = Column(Text, nullable=True)            # corpo pré-preenchido
+    categoria_id = Column(Integer, ForeignKey("categorias.id"), nullable=True)
+    subcategoria_id = Column(Integer, ForeignKey("subcategorias.id"), nullable=True)
+    sistema_afetado = Column(String(80), nullable=True)
+    impacto_negocio = Column(Enum(ImpactoNegocio), nullable=True)
+    ativo = Column(Boolean, default=True, nullable=False)
+
+
+# --------------------------------------------------------------------------- #
+# Configuração de SLA editável: horas-úteis por prioridade + feriados.
+# --------------------------------------------------------------------------- #
+class ParametroSla(Base):
+    __tablename__ = "parametros_sla"
+    prioridade = Column(Integer, primary_key=True)   # 1 a 5
+    horas = Column(Integer, nullable=False)
+
+
+class Feriado(Base):
+    __tablename__ = "feriados"
+    data = Column(String(10), primary_key=True)      # "YYYY-MM-DD"
+    descricao = Column(String(120), nullable=True)

@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Helpdesk Corporativo</title>
-    <link rel="stylesheet" href="/static/css/estilo.css?v=8">
-    <script src="/static/js/tema.js?v=7"></script>
+    <link rel="stylesheet" href="/static/css/estilo.css?v=12">
+    <script src="/static/js/tema.js?v=8"></script>
     <!-- Chart.js servido localmente seria o ideal em rede fechada; aqui via CDN.
          Em produção bancária, baixe o arquivo e sirva de /static. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -17,9 +17,28 @@
             <span class="selo">H</span>
             Helpdesk Corporativo
         </div>
+        <form class="topo-busca" id="form-busca-global" role="search">
+            <span class="topo-busca-ico">🔎</span>
+            <input type="search" id="busca-global" placeholder="Buscar por protocolo ou título..." autocomplete="off">
+        </form>
         <div class="usuario-info">
             <button id="btn-tema" class="tema-toggle" type="button">🌙 Escuro</button>
-            <span id="nome-usuario">—</span>
+            <div class="sino-wrap">
+                <button id="btn-sino" class="sino" type="button" aria-label="Notificações">
+                    🔔<span id="sino-badge" class="sino-badge" style="display:none;">0</span>
+                </button>
+                <div id="sino-painel" class="sino-painel" style="display:none;">
+                    <div class="sino-cab">
+                        <strong>Notificações</strong>
+                        <div>
+                            <button id="sino-lidas" class="link-mini">Marcar todas lidas</button>
+                            <button id="sino-limpar" class="link-mini">Limpar</button>
+                        </div>
+                    </div>
+                    <div id="sino-lista"></div>
+                </div>
+            </div>
+            <button id="btn-perfil" class="link-usuario" type="button"><span id="nome-usuario">—</span></button>
             <span id="badge-nivel" class="badge-nivel">—</span>
             <button id="btn-sair" class="btn btn-mini">Sair</button>
         </div>
@@ -34,6 +53,10 @@
         <!-- Conteúdo -->
         <main class="conteudo">
 
+            <!-- Barra de sub-navegação (preenchida por JS para grupos com sub-abas) -->
+            <div id="subnav" class="subnav"></div>
+
+
             <!-- PÁGINA: Abrir chamado (usuário) -->
             <section class="pagina" id="pg-abrir">
                 <div class="pagina-cabecalho">
@@ -42,6 +65,10 @@
                 </div>
                 <div class="painel" style="max-width:1160px;margin:0 auto;">
                     <div id="alerta-abrir" class="alerta"></div>
+                    <div class="campo" id="campo-template" style="display:none;">
+                        <label for="abrir-template">Usar um modelo (opcional)</label>
+                        <select id="abrir-template"><option value="">Começar do zero...</option></select>
+                    </div>
                     <div class="campo">
                         <label for="titulo">Título *</label>
                         <input type="text" id="titulo" maxlength="150"
@@ -61,6 +88,9 @@
                     <div id="deflexao-painel" class="deflexao" style="display:none;">
                         <div class="deflexao-titulo">💡 Isso já não resolve? Veja antes de abrir:</div>
                         <div id="deflexao-resultados"></div>
+                        <button id="btn-deflexao-resolvi" class="btn btn-secundario btn-mini" style="margin-top:10px;">
+                            ✓ Isso resolveu, não preciso abrir
+                        </button>
                     </div>
 
                     <div class="linha-campos">
@@ -213,6 +243,52 @@
                 <div id="kb-lista"></div>
             </section>
 
+            <!-- PÁGINA: Modelos de chamado (admin) -->
+            <section class="pagina" id="pg-modelos">
+                <div class="pagina-cabecalho" style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h1>Modelos de chamado</h1>
+                        <p>Formulários pré-preenchidos para pedidos comuns. Aparecem na abertura.</p>
+                    </div>
+                    <button id="btn-novo-modelo" class="btn btn-primario btn-mini">+ Novo modelo</button>
+                </div>
+                <div class="tabela-wrap">
+                    <table>
+                        <thead><tr><th>Nome</th><th>Categoria</th><th>Impacto</th><th>Ativo</th><th></th></tr></thead>
+                        <tbody id="corpo-modelos"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Configurações de SLA (admin) -->
+            <section class="pagina" id="pg-config">
+                <div class="pagina-cabecalho">
+                    <h1>Configurações de SLA</h1>
+                    <p>Defina as horas-úteis por prioridade e os feriados (não contam no prazo).</p>
+                </div>
+                <div class="grid-graficos">
+                    <div class="painel">
+                        <h3>Horas de SLA por prioridade</h3>
+                        <div id="config-sla-form"></div>
+                        <button id="btn-salvar-sla" class="btn btn-primario btn-mini" style="margin-top:14px;">Salvar horas</button>
+                    </div>
+                    <div class="painel">
+                        <h3>Feriados — calendário</h3>
+                        <div class="cal-nav">
+                            <button id="cal-prev" class="btn btn-fantasma btn-mini">‹</button>
+                            <strong id="cal-titulo">—</strong>
+                            <button id="cal-prox" class="btn btn-fantasma btn-mini">›</button>
+                        </div>
+                        <div id="calendario" class="calendario"></div>
+                        <div class="ajuda" style="margin-top:10px;">
+                            Clique num dia <strong>livre</strong> para marcar um feriado;
+                            clique num <strong>feriado</strong> para removê-lo.
+                        </div>
+                        <div id="cal-add" class="cal-add" style="display:none;"></div>
+                    </div>
+                </div>
+            </section>
+
             <!-- PÁGINA: Como usar (todos) -->
             <section class="pagina" id="pg-ajuda">
                 <div class="pagina-cabecalho">
@@ -259,7 +335,7 @@
                             <span class="sla-chip sla-ok">No prazo</span>
                             <span class="sla-chip sla-em_risco">Em risco</span>
                             <span class="sla-chip sla-vencido">Vencido</span>.
-                            Quando vence, o sistema <strong>escala automaticamente</strong> para o superior.</p>
+                            </p>
 
                             <h4>Papéis e hierarquia</h4>
                             <ul>
@@ -274,12 +350,20 @@
                     <details class="ajuda-sec">
                         <summary>🌐 Para todos os usuários</summary>
                         <div class="ajuda-corpo">
+                            <h4>Notificações (sininho 🔔)</h4>
+                            <p>No topo, o <strong>sininho</strong> mostra um número (notificações não lidas). Clique para ver a lista — avisos de resposta, atribuição, cancelamento, etc. Clique numa notificação para <strong>abrir o chamado</strong>; use o <strong>×</strong> para apagar, ou <strong>Marcar todas lidas</strong> / <strong>Limpar</strong>.</p>
+                            <h4>Meu perfil</h4>
+                            <p>Clique no <strong>seu nome</strong> (ao lado do sino) para atualizar <strong>e-mail e ramal</strong> e <strong>trocar sua senha</strong> quando quiser.</p>
+                            <h4>Busca rápida (topo)</h4>
+                            <p>Use a <strong>barra de busca</strong> no topo para encontrar um chamado por <strong>protocolo ou título</strong> de qualquer tela. O solicitante busca entre os seus chamados; o administrador busca em todo o sistema.</p>
+                            <h4>Anexos com pré-visualização</h4>
+                            <p>No detalhe do chamado, anexos de <strong>imagem</strong> aparecem como <strong>miniaturas</strong> — clique para ampliar; os demais arquivos têm link de <strong>baixar</strong>.</p>
                             <h4>Tema claro/escuro</h4>
                             <p>Use o botão <strong>🌙 Escuro / ☀️ Claro</strong> no canto superior direito. A escolha fica salva.</p>
                             <h4>Trocar senha</h4>
                             <p>Se a sua conta foi criada por um administrador, no <strong>primeiro acesso</strong> o sistema obriga a definir uma nova senha (mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo).</p>
                             <h4>Base de conhecimento</h4>
-                            <p>Na aba <strong>Conhecimento</strong> você busca artigos com soluções de problemas comuns — muitas vezes resolve sem precisar abrir chamado.</p>
+                            <p>Na aba <strong>Conhecimento</strong> você busca artigos com soluções de problemas comuns — muitas vezes resolve sem precisar abrir chamado. Ao abrir um artigo, você pode votar <strong>👍/👎 "isso resolveu?"</strong> para indicar se foi útil.</p>
                             <h4>Sair</h4>
                             <p>Botão <strong>Sair</strong> no topo. A sessão também expira ao fechar o navegador.</p>
                         </div>
@@ -292,8 +376,9 @@
                             <h4>Abrir um chamado</h4>
                             <ol>
                                 <li>Vá em <strong>Abrir chamado</strong>.</li>
+                                <li>Opcional: escolha um <strong>modelo</strong> (ex.: "Solicitar acesso", "Trocar periférico") que já preenche título, descrição e categoria.</li>
                                 <li>Escreva um <strong>título</strong> claro e uma <strong>descrição completa</strong> (mín. 30 caracteres): o que aconteceu, desde quando, mensagem de erro, sistema/tela afetados.</li>
-                                <li>Enquanto digita, veja o painel <strong>"💡 Isso já não resolve?"</strong> — ele sugere artigos e chamados parecidos já resolvidos. Pode resolver na hora.</li>
+                                <li>Enquanto digita, veja o painel <strong>"💡 Isso já não resolve?"</strong> — ele sugere artigos e chamados parecidos já resolvidos. Se resolver, clique em <strong>"Isso resolveu, não preciso abrir"</strong> e pronto — nada é aberto.</li>
                                 <li>Opcional: preencha categoria, sistema, módulo, impacto, urgência, unidade e contato — quanto mais detalhe, mais rápida a triagem.</li>
                                 <li>Anexe <strong>prints, PDF ou logs</strong> se ajudar (até 10 MB cada).</li>
                                 <li>Clique em <strong>Abrir chamado</strong>.</li>
@@ -329,31 +414,53 @@
                     <details class="ajuda-sec" id="sec-admin">
                         <summary>🛠️ Guia do Administrador <span class="tag-perfil">admin</span></summary>
                         <div class="ajuda-corpo">
+                            <h4>Como o menu é organizado</h4>
+                            <p>O menu tem <strong>5 itens</strong>. Dois deles abrem <strong>sub-abas</strong> (uma faixa logo abaixo do título):</p>
+                            <ul>
+                                <li><strong>Painel</strong> — indicadores.</li>
+                                <li><strong>Chamados</strong> → <em>Lista</em> · <em>Minha fila</em> · <em>Kanban</em>.</li>
+                                <li><strong>Conhecimento</strong> — base de artigos.</li>
+                                <li><strong>Administração</strong> → <em>Usuários</em> · <em>Modelos</em> · <em>SLA &amp; Feriados</em> · <em>Categorias</em> · <em>Auditoria</em>.</li>
+                                <li><strong>Como usar</strong> — este manual.</li>
+                            </ul>
+
                             <h4>Painel de indicadores</h4>
-                            <p>KPIs no topo: chamados em aberto, resolvidos, críticos, tempo médio de resolução, <strong>SLA vencido/em risco</strong>, <strong>CSAT</strong> e <strong>% de SLA cumprido</strong>. Abaixo, gráficos por gravidade, status, prioridade, aging, SLA, workload por responsável, CSAT por analista/categoria e volume por dia. Use <strong>Imprimir / PDF</strong> para um relatório.</p>
+                            <p>KPIs no topo: chamados em aberto, resolvidos, críticos, tempo médio de resolução, <strong>SLA vencido/em risco</strong>, <strong>CSAT</strong>, <strong>% de SLA cumprido</strong> e <strong>Deflexões</strong> (quantas vezes alguém resolveu pela sugestão sem abrir chamado). Abaixo, gráficos por gravidade, status, prioridade, aging, SLA, workload por responsável, CSAT por analista/categoria e volume por dia. Use <strong>Imprimir / PDF</strong> para um relatório.</p>
 
                             <h4>Gestão de chamados</h4>
                             <ul>
-                                <li><strong>Filtrar</strong> por status, gravidade, categoria, período (datas), SLA e busca por título/protocolo; navegar por <strong>páginas</strong>.</li>
+                                <li><strong>Filtrar</strong> por status, gravidade, categoria, <strong>etiqueta (tag)</strong>, período (datas), SLA e busca por título/protocolo; navegar por <strong>páginas</strong>.</li>
                                 <li><strong>Exportar CSV</strong> para análise no Excel.</li>
                                 <li><strong>Atender</strong> um chamado abre um modal em abas:
                                     <ul>
                                         <li><strong>Atendimento</strong> — mudar status, escrever resposta pública (vai ao solicitante) e nota interna (só equipe).</li>
-                                        <li><strong>Triagem &amp; classificação</strong> — corrigir categoria, gravidade, prioridade, impacto, atribuir responsável e registrar o <strong>encerramento</strong> (causa raiz, solução, prevenção).</li>
-                                        <li><strong>Conhecimento</strong> — ver chamados similares, buscar na KB e <strong>promover este chamado a artigo</strong>.</li>
+                                        <li><strong>Triagem &amp; classificação</strong> — corrigir categoria, gravidade, prioridade, impacto, atribuir responsável, gerir <strong>etiquetas (tags)</strong> e registrar o <strong>encerramento</strong> (causa raiz, solução, prevenção).</li>
+                                        <li><strong>Conhecimento</strong> — ver chamados similares, buscar na KB, <strong>promover este chamado a artigo</strong> e <strong>mesclar duplicados</strong> (move tudo para um chamado principal e cancela este).</li>
                                         <li><strong>Histórico</strong> — toda a timeline.</li>
                                     </ul>
                                 </li>
                             </ul>
 
+                            <h4>Minha fila</h4>
+                            <p>Sub-aba de <strong>Chamados</strong> que mostra só os chamados <strong>atribuídos a você</strong> — sua fila pessoal de atendimento, sem o ruído do resto do sistema.</p>
+
                             <h4>Ações em massa</h4>
                             <p>Marque vários chamados (checkbox) e use a barra que aparece para <strong>atribuir</strong>, <strong>mudar status</strong> ou <strong>cancelar</strong> todos de uma vez (transições inválidas são puladas).</p>
 
                             <h4>Kanban</h4>
-                            <p>Visão por colunas de status. <strong>Arraste</strong> o cartão entre colunas para mudar o status; clique para abrir o chamado.</p>
+                            <p>Sub-aba de <strong>Chamados</strong>: visão por colunas de status. <strong>Arraste</strong> o cartão entre colunas para mudar o status; clique para abrir o chamado.</p>
+
+                            <h4>Modelos de chamado</h4>
+                            <p>Em <strong>Administração → Modelos</strong>, crie/edite/exclua os formulários pré-preenchidos que aparecem na abertura (título, descrição, categoria e impacto sugeridos).</p>
+
+                            <h4>SLA &amp; Feriados</h4>
+                            <p>Em <strong>Administração → SLA &amp; Feriados</strong>, ajuste as <strong>horas-úteis por prioridade</strong> e gerencie os <strong>feriados</strong> num <strong>calendário</strong> (já vem com o calendário da B3): clique num dia livre para marcar, clique num feriado para remover. Feriados não contam no prazo de SLA.</p>
+
+                            <h4>Categorias</h4>
+                            <p>Em <strong>Administração → Categorias</strong>, gerencie a <strong>taxonomia</strong> usada na triagem e nos filtros: crie <strong>categorias</strong> e adicione <strong>subcategorias</strong> a cada uma.</p>
 
                             <h4>Base de conhecimento</h4>
-                            <p>Em <strong>Conhecimento</strong>, clique em <strong>+ Novo artigo</strong> para criar, ou abra um artigo para <strong>Editar/Excluir</strong>. Promover chamados resolvidos a artigos alimenta a deflexão.</p>
+                            <p>Em <strong>Conhecimento</strong>, clique em <strong>+ Novo artigo</strong> para criar, ou abra um artigo para <strong>Editar/Excluir</strong>. Promover chamados resolvidos a artigos alimenta a deflexão; os votos 👍/👎 indicam a utilidade.</p>
 
                             <h4>Usuários</h4>
                             <ul>
@@ -364,7 +471,7 @@
                             </ul>
 
                             <h4>Auditoria</h4>
-                            <p>Registro imutável de quem fez o quê, quando e de onde (logins, mudanças de status, cancelamentos, etc.).</p>
+                            <p>Em <strong>Administração → Auditoria</strong>: registro imutável de quem fez o quê, quando e de onde (logins, mudanças de status, cancelamentos, etc.).</p>
 
                             <h4>Reset do banco</h4>
                             <p><span class="tag-perfil">admin</span> Apaga tudo e recria os dados de exemplo. Exige reconfirmar matrícula + senha. Use só em ambiente de teste.</p>
@@ -429,6 +536,10 @@
                         <div class="rotulo">SLA cumprido</div>
                         <div class="valor pequeno" id="kpi-sla-cumprido">—</div>
                     </div>
+                    <div class="kpi destaque-aberto">
+                        <div class="rotulo">Deflexões (autoatendimento)</div>
+                        <div class="valor pequeno" id="kpi-deflexoes">—</div>
+                    </div>
                 </div>
 
                 <div class="grid-graficos">
@@ -474,7 +585,7 @@
             <!-- PÁGINA: Gestão de chamados (admin) -->
             <section class="pagina" id="pg-gestao">
                 <div class="pagina-cabecalho">
-                    <h1>Gestão de chamados</h1>
+                    <h1 id="titulo-gestao">Gestão de chamados</h1>
                     <p>Visualize, filtre, responda e atualize qualquer chamado do sistema.</p>
                 </div>
 
@@ -502,6 +613,7 @@
                         <option value="ok">SLA ok</option>
                     </select>
                     <select id="filtro-categoria"><option value="">Todas as categorias</option></select>
+                    <input type="text" id="filtro-tag" placeholder="Etiqueta..." style="width:130px;">
                     <input type="date" id="filtro-de" title="De">
                     <input type="date" id="filtro-ate" title="Até">
                     <button id="btn-limpar-filtros" class="btn btn-fantasma btn-mini">Limpar</button>
@@ -614,6 +726,18 @@
                 </div>
             </section>
 
+            <!-- PÁGINA: Categorias (admin) -->
+            <section class="pagina" id="pg-categorias">
+                <div class="pagina-cabecalho" style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h1>Categorias e subcategorias</h1>
+                        <p>A taxonomia usada na triagem e nos filtros. Adicione categorias e subcategorias.</p>
+                    </div>
+                    <button id="btn-nova-categoria" class="btn btn-primario btn-mini">+ Nova categoria</button>
+                </div>
+                <div id="lista-categorias" class="lista-categorias"></div>
+            </section>
+
         </main>
     </div>
 
@@ -629,7 +753,7 @@
         </div>
     </div>
 
-    <script src="/static/js/api.js?v=7"></script>
-    <script src="/static/js/app.js?v=11"></script>
+    <script src="/static/js/api.js?v=10"></script>
+    <script src="/static/js/app.js?v=14"></script>
 </body>
 </html>

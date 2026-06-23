@@ -66,6 +66,7 @@ def criar(
         senha_hash=gerar_hash_senha(dados.senha),
         nivel_acesso=nivel,
         papel=dados.papel,
+        organizacao=dados.organizacao,
         supervisor_id=dados.supervisor_id,
         unidade_setor=dados.unidade_setor,
         email=dados.email,
