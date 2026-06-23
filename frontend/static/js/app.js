@@ -1040,22 +1040,43 @@
                 legend: { labels: { color: t.texto, font: { family: 'Segoe UI', size: 12 }, usePointStyle: true, pointStyle: 'circle', padding: 16 } },
                 tooltip: {
                     backgroundColor: t.card, titleColor: t.texto, bodyColor: t.texto,
-                    borderColor: t.grid, borderWidth: 1, padding: 10, cornerRadius: 8, displayColors: true,
-                    titleFont: { family: 'Segoe UI' }, bodyFont: { family: 'Segoe UI' },
+                    borderColor: t.grid, borderWidth: 1, cornerRadius: 10,
+                    padding: { top: 10, bottom: 10, left: 14, right: 14 },
+                    displayColors: false,          // sem o quadradinho de cor (declutter)
+                    caretPadding: 8, caretSize: 7,  // afasta o balão da barra
+                    yAlign: 'bottom',               // sempre acima do ponto, não sobrepondo
+                    titleFont: { family: 'Segoe UI', weight: '700', size: 13 },
+                    bodyFont: { family: 'Segoe UI', size: 13 },
+                    callbacks: {
+                        // Texto claro no balão: "N chamado(s)" em vez de um número solto.
+                        label: (ctx) => {
+                            const v = (ctx.parsed && typeof ctx.parsed === 'object')
+                                ? ctx.parsed.y : ctx.parsed;
+                            return `${v} ${v === 1 ? 'chamado' : 'chamados'}`;
+                        },
+                    },
                 },
             },
         };
     }
-    function opcoesBarra() {
+    function opcoesBarra(horizontal) {
         const t = tema();
+        const base = opcoesBase();
+        const eixoValor = {
+            beginAtZero: true, grid: { color: t.grid, drawTicks: false },
+            border: { display: false }, ticks: { color: t.texto, precision: 0, padding: 8 },
+        };
+        const eixoCategoria = {
+            grid: { display: false }, border: { display: false },
+            ticks: { color: t.texto, font: { size: 12 }, autoSkip: false },
+        };
         return {
-            ...opcoesBase(),
-            plugins: { ...opcoesBase().plugins, legend: { display: false } },
-            scales: {
-                x: { grid: { display: false }, border: { display: false }, ticks: { color: t.texto, font: { size: 12 } } },
-                y: { beginAtZero: true, grid: { color: t.grid, drawTicks: false }, border: { display: false },
-                     ticks: { color: t.texto, precision: 0, padding: 8 } },
-            },
+            ...base,
+            indexAxis: horizontal ? 'y' : 'x',
+            plugins: { ...base.plugins, legend: { display: false } },
+            scales: horizontal
+                ? { x: eixoValor, y: eixoCategoria }
+                : { x: eixoCategoria, y: eixoValor },
         };
     }
 
@@ -1075,7 +1096,7 @@
         desenharDoughnut('gravidade', 'g-gravidade', gl, gl.map(l => d.por_gravidade[l] || 0), gl.map(l => COR.gravidade[l]));
         const stKeys = Object.keys(d.por_status);
         desenharBarra('status', 'g-status', stKeys.map(k => ROTULO_STATUS[k] || k),
-            stKeys.map(k => d.por_status[k]), stKeys.map(k => COR.status[k] || '#9a2d3a'));
+            stKeys.map(k => d.por_status[k]), stKeys.map(k => COR.status[k] || '#9a2d3a'), true);
         desenharBarra('prioridade', 'g-prioridade', ['P1', 'P2', 'P3', 'P4', 'P5'],
             ['1', '2', '3', '4', '5'].map(p => d.por_prioridade[p] || 0), COR.prioridade);
         desenharBarra('aging', 'g-aging', ['0-4h', '4-24h', '1-3d', '>3d'],
@@ -1098,13 +1119,13 @@
                 plugins: { ...opcoesBase().plugins, legend: { ...opcoesBase().plugins.legend, position: 'bottom' } } },
         });
     }
-    function desenharBarra(chave, canvasId, labels, dados, cor) {
+    function desenharBarra(chave, canvasId, labels, dados, cor, horizontal) {
         destruir(chave);
         graficos[chave] = new Chart(document.getElementById(canvasId), {
             type: 'bar',
             data: { labels, datasets: [{ data: dados, backgroundColor: cor,
-                borderRadius: 8, maxBarThickness: 46, borderSkipped: false }] },
-            options: opcoesBarra(),
+                borderRadius: 8, maxBarThickness: horizontal ? 26 : 46, borderSkipped: false }] },
+            options: opcoesBarra(horizontal),
         });
     }
     function desenharVolume(volume) {
