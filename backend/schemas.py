@@ -16,6 +16,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from auth import validar_senha_forte
 from config import config
 from models import (
     Gravidade,
@@ -66,6 +67,20 @@ class TokenResponse(BaseModel):
     nome: str
     nivel_acesso: NivelAcesso
     papel: Papel
+    senha_provisoria: bool = False
+
+
+class TrocarSenha(BaseModel):
+    senha_atual: str
+    nova_senha: str
+
+    @field_validator("nova_senha")
+    @classmethod
+    def validar_nova(cls, v: str) -> str:
+        erro = validar_senha_forte(v)
+        if erro:
+            raise ValueError(erro)
+        return v
 
 
 class AutoCadastro(BaseModel):
@@ -95,10 +110,9 @@ class AutoCadastro(BaseModel):
     @field_validator("senha")
     @classmethod
     def validar_senha(cls, v: str) -> str:
-        if len(v) < config.MIN_PASSWORD_LENGTH:
-            raise ValueError(
-                f"A senha deve ter ao menos {config.MIN_PASSWORD_LENGTH} caracteres."
-            )
+        erro = validar_senha_forte(v)
+        if erro:
+            raise ValueError(erro)
         return v
 
     @field_validator("email", "unidade_setor")
@@ -146,10 +160,9 @@ class UsuarioCriar(BaseModel):
     @field_validator("senha")
     @classmethod
     def validar_senha(cls, v: str) -> str:
-        if len(v) < config.MIN_PASSWORD_LENGTH:
-            raise ValueError(
-                f"A senha deve ter ao menos {config.MIN_PASSWORD_LENGTH} caracteres."
-            )
+        erro = validar_senha_forte(v)
+        if erro:
+            raise ValueError(erro)
         return v
 
     @field_validator("unidade_setor", "email", "ramal")
@@ -175,10 +188,9 @@ class UsuarioAtualizar(BaseModel):
     def validar_senha(cls, v):
         if v is None:
             return v
-        if len(v) < config.MIN_PASSWORD_LENGTH:
-            raise ValueError(
-                f"A senha deve ter ao menos {config.MIN_PASSWORD_LENGTH} caracteres."
-            )
+        erro = validar_senha_forte(v)
+        if erro:
+            raise ValueError(erro)
         return v
 
     @field_validator("nome", "unidade_setor", "email", "ramal")
@@ -206,6 +218,7 @@ class UsuarioResposta(BaseModel):
     email: Optional[str] = None
     ramal: Optional[str] = None
     ativo: int = 1
+    senha_provisoria: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -462,3 +475,37 @@ class ChamadoDetalhe(ChamadoResposta):
     comentarios: list[ComentarioResposta] = []
     anexos: list[AnexoResposta] = []
     avaliacao: Optional[AvaliacaoResposta] = None
+
+
+# --------------------------------------------------------------------------- #
+# Base de conhecimento (KB)
+# --------------------------------------------------------------------------- #
+class ArtigoCriar(BaseModel):
+    titulo: str
+    conteudo: str
+    chamado_origem_id: Optional[int] = None
+
+    @field_validator("titulo")
+    @classmethod
+    def vt(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 4:
+            raise ValueError("Título muito curto.")
+        return _sanitizar(v)
+
+    @field_validator("conteudo")
+    @classmethod
+    def vc(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 10:
+            raise ValueError("Conteúdo muito curto.")
+        return _sanitizar(v)
+
+
+class ArtigoResposta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    titulo: str
+    conteudo: str
+    chamado_origem_id: Optional[int] = None
+    criado_em: datetime

@@ -20,14 +20,18 @@ Endpoints:
   POST  /api/admin/categorias               -> cria categoria
   POST  /api/admin/subcategorias            -> cria subcategoria
 """
+import csv
+import io
 from datetime import timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import auditoria
+import busca
 from auth import (
     exigir_admin,
     ip_requisicao,
@@ -42,6 +46,7 @@ from estado import (
     transicao_valida,
 )
 from models import (
+    Artigo,
     Auditoria,
     Categoria,
     Chamado,
@@ -54,6 +59,8 @@ from models import (
 )
 from notificacoes import notificar
 from schemas import (
+    ArtigoCriar,
+    ArtigoResposta,
     CategoriaCriar,
     CategoriaResposta,
     ChamadoAlterarStatus,
@@ -457,6 +464,104 @@ def listar_auditoria(
         }
         for e in eventos
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Base de conhecimento / chamados similares (FTS5)
+# --------------------------------------------------------------------------- #
+@router.get("/chamados/{chamado_id}/similares")
+def chamados_similares(
+    chamado_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Chamados parecidos (FTS5) — apoia deduplicação e reuso de solução."""
+    chamado = _buscar_chamado(db, chamado_id)
+    return busca.similares(db, chamado, limite=5)
+
+
+@router.post("/chamados/{chamado_id}/promover-artigo", response_model=ArtigoResposta, status_code=201)
+def promover_artigo(
+    chamado_id: int,
+    dados: ArtigoCriar,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Promove a solução de um chamado a artigo da base de conhecimento."""
+    chamado = _buscar_chamado(db, chamado_id)
+    artigo = Artigo(
+        titulo=dados.titulo,
+        conteudo=dados.conteudo,
+        chamado_origem_id=chamado.id,
+        criado_por_id=usuario.id,
+    )
+    db.add(artigo)
+    auditoria.registrar(
+        db, usuario=usuario, acao="artigo_promovido", entidade="artigo",
+        entidade_id=chamado.id, ip=ip_requisicao(request),
+    )
+    db.commit()
+    db.refresh(artigo)
+    return artigo
+
+
+@router.get("/kb")
+def base_conhecimento(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+    busca_termo: Optional[str] = Query(None, alias="busca", max_length=150),
+):
+    """Busca na base de conhecimento (FTS5). Sem termo, lista os mais recentes."""
+    return busca.buscar_kb(db, busca_termo or "", limite=15)
+
+
+# --------------------------------------------------------------------------- #
+# Exportação CSV (relatório)
+# --------------------------------------------------------------------------- #
+@router.get("/exportacao/chamados.csv")
+def exportar_csv(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """Exporta todos os chamados (não excluídos) em CSV para análise/relatório."""
+    chamados = (
+        db.query(Chamado)
+        .filter(Chamado.excluido_em.is_(None))
+        .order_by(Chamado.criado_em.desc())
+        .all()
+    )
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow([
+        "protocolo", "titulo", "status", "gravidade", "prioridade",
+        "impacto", "solicitante", "responsavel", "criado_em", "resolvido_em",
+        "sla_status",
+    ])
+    for c in chamados:
+        w.writerow([
+            c.numero_protocolo or c.id,
+            c.titulo,
+            c.status.value,
+            c.gravidade.value if c.gravidade else "",
+            c.prioridade or "",
+            c.impacto_negocio.value if c.impacto_negocio else "",
+            c.autor.nome if c.autor else "",
+            c.atribuido_a.nome if c.atribuido_a else "",
+            c.criado_em.strftime("%Y-%m-%d %H:%M") if c.criado_em else "",
+            c.resolvido_em.strftime("%Y-%m-%d %H:%M") if c.resolvido_em else "",
+            status_sla(c.sla_prazo),
+        ])
+    buf.seek(0)
+
+    # ﻿ (BOM) para o Excel reconhecer UTF-8 com acentos corretamente.
+    conteudo = "﻿" + buf.getvalue()
+    return StreamingResponse(
+        iter([conteudo]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=chamados.csv"},
+    )
 
 
 # --------------------------------------------------------------------------- #

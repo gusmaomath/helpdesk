@@ -8,13 +8,19 @@ const API = (() => {
     const CHAVE_TOKEN = 'helpdesk_token';
     const CHAVE_USUARIO = 'helpdesk_usuario';
 
-    function salvarSessao(token, id, nome, nivel, papel) {
+    function salvarSessao(token, id, nome, nivel, papel, senhaProvisoria) {
         // sessionStorage: a sessão expira ao fechar o navegador (mais seguro
         // que localStorage para um ambiente compartilhado).
         sessionStorage.setItem(CHAVE_TOKEN, token);
         sessionStorage.setItem(
-            CHAVE_USUARIO, JSON.stringify({ id, nome, nivel, papel })
+            CHAVE_USUARIO,
+            JSON.stringify({ id, nome, nivel, papel, senhaProvisoria: !!senhaProvisoria })
         );
+    }
+
+    function marcarSenhaTrocada() {
+        const u = obterUsuario();
+        if (u) { u.senhaProvisoria = false; sessionStorage.setItem(CHAVE_USUARIO, JSON.stringify(u)); }
     }
 
     function obterToken() { return sessionStorage.getItem(CHAVE_TOKEN); }
@@ -96,8 +102,18 @@ const API = (() => {
         return null;
     }
 
+    // Download de blob autenticado (CSV) — fetch para enviar o header de auth.
+    async function baixarBlob(caminho) {
+        const token = obterToken();
+        const r = await fetch(caminho, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+        if (!r.ok) throw new Error(`Falha ao exportar (${r.status}).`);
+        return await r.blob();
+    }
+
     return {
-        salvarSessao, obterToken, obterUsuario, limparSessao, sair,
+        salvarSessao, marcarSenhaTrocada, obterToken, obterUsuario, limparSessao, sair,
 
         login: (matricula, senha) =>
             requisitar('/api/auth/login', {
@@ -108,6 +124,11 @@ const API = (() => {
         registrar: (dados) =>
             requisitar('/api/auth/registrar', {
                 method: 'POST', body: JSON.stringify(dados),
+            }),
+
+        trocarSenha: (senha_atual, nova_senha) =>
+            requisitar('/api/auth/trocar-senha', {
+                method: 'POST', body: JSON.stringify({ senha_atual, nova_senha }),
             }),
 
         // --- Solicitante ---
@@ -129,17 +150,28 @@ const API = (() => {
             requisitar(`/api/chamados/${id}/avaliacao`, {
                 method: 'POST', body: JSON.stringify({ nota, comentario }),
             }),
+        reabrir: (id) =>
+            requisitar(`/api/chamados/${id}/reabrir`, { method: 'POST' }),
         enviarAnexo, baixarAnexo,
 
         // --- Equipe / admin ---
         todosChamados: (filtros = {}) => {
             const p = new URLSearchParams();
-            ['status', 'gravidade', 'busca', 'sla', 'atribuido'].forEach(k => {
+            ['status', 'gravidade', 'busca', 'sla', 'atribuido', 'limite', 'offset'].forEach(k => {
                 if (filtros[k] !== undefined && filtros[k] !== '') p.set(k, filtros[k]);
             });
             const qs = p.toString();
             return requisitar('/api/admin/chamados' + (qs ? `?${qs}` : ''));
         },
+
+        similares: (id) => requisitar(`/api/admin/chamados/${id}/similares`),
+        promoverArtigo: (id, titulo, conteudo) =>
+            requisitar(`/api/admin/chamados/${id}/promover-artigo`, {
+                method: 'POST', body: JSON.stringify({ titulo, conteudo }),
+            }),
+        buscarKb: (busca) =>
+            requisitar('/api/admin/kb' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
+        baixarCsv: () => baixarBlob('/api/admin/exportacao/chamados.csv'),
         detalheAdmin: (id) => requisitar(`/api/admin/chamados/${id}`),
         transicoes: (id) => requisitar(`/api/admin/chamados/${id}/transicoes`),
         responderChamado: (id, resposta) =>

@@ -189,9 +189,21 @@ class AnalisadorMock(AnalisadorIA):
 
 
 # =============================================================================
-# PONTO ÚNICO DE TROCA — aqui você liga o modelo real no futuro.
+# CONEXÃO FUTURA COM IA — ANÁLISES AVANÇADAS (desativado por enquanto)
+# =============================================================================
+# Quando a IA proprietária do banco estiver pronta, além de `analisar()` ela
+# pode oferecer análises extras. Deixe a interface pronta e plugue o modelo real
+# implementando estes métodos opcionais e descomentando os pontos de chamada
+# espalhados pelo sistema (ex.: escalonamento.py, rota de "similares"/handoff):
 #
-# Exemplo futuro:
+# class AnalisadorIA(ABC):
+#     def sugerir_resposta(self, chamado) -> str: ...        # copiloto do analista
+#     def classificar_sentimento(self, texto) -> str: ...    # positivo/neutro/negativo
+#     def detectar_duplicado(self, chamado) -> Optional[int]: ...  # id do provável dup.
+#     def resumir_para_handoff(self, chamado) -> str: ...     # resumo p/ troca de nível
+#     def prever_risco_sla(self, chamado) -> float: ...       # 0..1 risco de estouro
+#
+# Exemplo de troca do modelo ativo:
 #     from ia_proprietaria import AnalisadorBancoXPTO
 #     analisador_ativo: AnalisadorIA = AnalisadorBancoXPTO(endpoint="...", token="...")
 # =============================================================================

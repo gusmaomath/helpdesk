@@ -34,8 +34,17 @@ class Config:
         "HELPDESK_DATABASE_URL", "sqlite:///./helpdesk.db"
     )
 
-    # Política de senha mínima
+    # Política de senha
     MIN_PASSWORD_LENGTH: int = 8
+    # Exige complexidade (maiúscula, minúscula, dígito e símbolo).
+    SENHA_EXIGE_COMPLEXIDADE: bool = (
+        os.getenv("HELPDESK_SENHA_COMPLEXIDADE", "1") == "1"
+    )
+
+    # Intervalo (segundos) do verificador de SLA em background. 0 desativa.
+    ESCALONAMENTO_INTERVALO_SEGUNDOS: int = _env_int(
+        "HELPDESK_ESCALONAMENTO_INTERVALO", 300
+    )
 
     # --- Defesa contra brute force no login ---
     MAX_LOGIN_ATTEMPTS: int = _env_int("HELPDESK_MAX_LOGIN_ATTEMPTS", 5)

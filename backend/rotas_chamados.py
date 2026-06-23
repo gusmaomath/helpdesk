@@ -10,9 +10,7 @@ POST   /api/chamados/{id}/anexos      -> envia evidência (upload)
 """
 import hashlib
 import os
-import time
 import uuid
-from collections import defaultdict, deque
 
 from fastapi import (
     APIRouter,
@@ -28,6 +26,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import auditoria
+import rate_limit
 from auth import (
     ids_descendentes,
     ids_visiveis_para,
@@ -69,21 +68,7 @@ from sla import calcular_prazo
 
 router = APIRouter(prefix="/api/chamados", tags=["Chamados"])
 
-# Rate limit simples por usuário (janela deslizante de 60s, em memória).
-_aberturas: dict[int, deque] = defaultdict(deque)
-
-
-def _checar_rate_limit(usuario_id: int) -> None:
-    agora = time.time()
-    janela = _aberturas[usuario_id]
-    while janela and agora - janela[0] > 60:
-        janela.popleft()
-    if len(janela) >= config.MAX_CHAMADOS_POR_MINUTO:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Limite de aberturas por minuto atingido. Aguarde um instante.",
-        )
-    janela.append(agora)
+TIPO_ABERTURA = "abertura_chamado"
 
 
 @router.post("", response_model=ChamadoDetalhe, status_code=status.HTTP_201_CREATED)
@@ -93,7 +78,15 @@ def abrir_chamado(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(obter_usuario_atual),
 ):
-    _checar_rate_limit(usuario.id)
+    # Rate limit por usuário, PERSISTENTE (tabela) — vale entre workers.
+    if rate_limit.excedeu(
+        db, TIPO_ABERTURA, usuario.id, config.MAX_CHAMADOS_POR_MINUTO, 60
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Limite de aberturas por minuto atingido. Aguarde um instante.",
+        )
+    rate_limit.registrar(db, TIPO_ABERTURA, usuario.id, commit=False)
 
     # Solicitante: por padrão é o próprio; um analista pode abrir em nome de outro.
     solicitante = usuario
@@ -384,6 +377,46 @@ def cancelar_chamado(
         destino=chamado.contato_retorno or "solicitante",
         assunto=f"Chamado {chamado.numero_protocolo} cancelado",
         corpo=f"Motivo: {dados.motivo}",
+    )
+    return serializar_detalhe(chamado, incluir_internos=False)
+
+
+@router.post("/{chamado_id}/reabrir", response_model=ChamadoDetalhe)
+def reabrir_chamado(
+    chamado_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Reabertura formal pelo SOLICITANTE de um chamado já encerrado
+    (resolvido/fechado/cancelado). Recalcula o SLA a partir de agora.
+    """
+    chamado = _meu_chamado_ou_404(db, chamado_id, usuario)
+    if chamado.status not in (
+        StatusChamado.RESOLVIDO, StatusChamado.FECHADO, StatusChamado.CANCELADO
+    ):
+        raise HTTPException(422, "Só é possível reabrir um chamado encerrado.")
+
+    chamado.status = StatusChamado.REABERTO
+    chamado.resolvido_em = None
+    chamado.sla_escalado_em = None
+    chamado.sla_prazo = calcular_prazo(agora_utc(), chamado.prioridade)
+    chamado.versao_linha += 1
+    db.add(Comentario(
+        chamado_id=chamado.id, autor_id=usuario.id, interno=False,
+        corpo="Chamado reaberto pelo solicitante.",
+    ))
+    auditoria.registrar(
+        db, usuario=usuario, acao="chamado_reaberto", entidade="chamado",
+        entidade_id=chamado.id, ip=ip_requisicao(request),
+    )
+    db.commit()
+    db.refresh(chamado)
+    notificar(
+        destino="fila-suporte",
+        assunto=f"Chamado {chamado.numero_protocolo} reaberto",
+        corpo=f"O solicitante reabriu o chamado: {chamado.titulo}",
     )
     return serializar_detalhe(chamado, incluir_internos=False)
 

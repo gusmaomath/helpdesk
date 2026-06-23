@@ -13,8 +13,7 @@ Decisões de segurança para ambiente bancário:
 - Tokens com expiração curta (turno de trabalho).
 - Mensagens de erro genéricas no login (dificulta enumeração de usuários).
 """
-import time
-from collections import defaultdict
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -55,38 +54,25 @@ def criar_token_acesso(usuario: Usuario) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Controle de brute force (em memória de processo)
+# Política de senha
 # --------------------------------------------------------------------------- #
-class _ControleTentativas:
+def validar_senha_forte(senha: str) -> Optional[str]:
     """
-    Rastreia tentativas falhas por matrícula. Simples e suficiente para um
-    deploy single-process. Em multi-worker, mover para tabela/Redis.
+    Retorna uma mensagem de erro se a senha não cumpre a política, ou None se OK.
+    Centraliza a regra para ser reutilizada pelos schemas e pela troca de senha.
     """
-
-    def __init__(self):
-        self._falhas: dict[str, list[float]] = defaultdict(list)
-        self._bloqueio_ate: dict[str, float] = {}
-
-    def bloqueado(self, chave: str) -> bool:
-        ate = self._bloqueio_ate.get(chave, 0)
-        if ate and time.time() < ate:
-            return True
-        return False
-
-    def registrar_falha(self, chave: str) -> None:
-        agora = time.time()
-        janela = [t for t in self._falhas[chave] if agora - t < config.LOGIN_BLOQUEIO_SEGUNDOS]
-        janela.append(agora)
-        self._falhas[chave] = janela
-        if len(janela) >= config.MAX_LOGIN_ATTEMPTS:
-            self._bloqueio_ate[chave] = agora + config.LOGIN_BLOQUEIO_SEGUNDOS
-
-    def limpar(self, chave: str) -> None:
-        self._falhas.pop(chave, None)
-        self._bloqueio_ate.pop(chave, None)
-
-
-controle_tentativas = _ControleTentativas()
+    if len(senha) < config.MIN_PASSWORD_LENGTH:
+        return f"A senha deve ter ao menos {config.MIN_PASSWORD_LENGTH} caracteres."
+    if config.SENHA_EXIGE_COMPLEXIDADE:
+        if not re.search(r"[a-z]", senha):
+            return "A senha deve conter ao menos uma letra minúscula."
+        if not re.search(r"[A-Z]", senha):
+            return "A senha deve conter ao menos uma letra maiúscula."
+        if not re.search(r"\d", senha):
+            return "A senha deve conter ao menos um número."
+        if not re.search(r"[^A-Za-z0-9]", senha):
+            return "A senha deve conter ao menos um caractere especial."
+    return None
 
 
 # --------------------------------------------------------------------------- #

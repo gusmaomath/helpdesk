@@ -27,16 +27,21 @@ helpdesk/
 │   ├── auth.py             # Hash, JWT, papéis, escopo hierárquico, brute force
 │   ├── ia.py               # >>> MÓDULO DE IA (mock plug and play) + PII mask <<<
 │   ├── sla.py              # Cálculo de SLA em horário comercial + aging
+│   ├── escalonamento.py    # Job em background: escala chamados com SLA vencido
 │   ├── estado.py           # Máquina de estados do chamado (transições válidas)
+│   ├── busca.py            # Busca textual FTS5 (similares + base de conhecimento)
+│   ├── rate_limit.py       # Rate-limit / anti-brute-force PERSISTENTE (tabela)
 │   ├── notificacoes.py     # Camada de notificação plugável (log/Teams/Slack)
 │   ├── auditoria.py        # Helper da trilha de auditoria
 │   ├── protocolo.py        # Geração de protocolo (contador atômico, sem corrida)
 │   ├── serializar.py       # ORM -> schemas de resposta (com campos derivados)
-│   ├── rotas_auth.py       # /api/auth/*      (login, auto-cadastro, me)
-│   ├── rotas_chamados.py   # /api/chamados/*  (usuário: abrir, equipe, cancelar, anexos)
-│   ├── rotas_admin.py      # /api/admin/*     (admin: gestão, dashboard, auditoria, reset)
+│   ├── rotas_auth.py       # /api/auth/*      (login, auto-cadastro, troca de senha)
+│   ├── rotas_chamados.py   # /api/chamados/*  (abrir, equipe, cancelar, reabrir, anexos)
+│   ├── rotas_admin.py      # /api/admin/*     (gestão, dashboard, KB, export, reset)
 │   ├── rotas_usuarios.py   # /api/admin/usuarios/* (gestão de usuários/hierarquia)
 │   ├── seed.py             # Cria taxonomia, usuários e chamados de exemplo
+│   ├── alembic/            # Migrações de schema (batch mode p/ SQLite)
+│   ├── alembic.ini
 │   └── requirements.txt
 └── frontend/
     ├── templates/
@@ -72,10 +77,13 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Acesse: **http://localhost:8000** · Documentação da API: **http://localhost:8000/docs**
 
-> **Schema e migrações:** `create_all` cria tabelas novas, mas **não altera**
-> tabelas existentes. Ao mudar `models.py` em desenvolvimento, rode
-> `python seed.py --reset`. Em produção, versione o schema com **Alembic**
-> (use `render_as_batch=True` por causa do `ALTER TABLE` limitado do SQLite).
+> **Schema e migrações:** em **desenvolvimento**, `python seed.py --reset` recria
+> tudo do zero (rápido). Para **migrações versionadas** há **Alembic** configurado
+> (com `render_as_batch=True` por causa do `ALTER TABLE` limitado do SQLite):
+> ```bash
+> alembic upgrade head                              # aplica as migrações
+> alembic revision --autogenerate -m "minha mudanca"  # gera nova migração
+> ```
 
 ## Credenciais de teste (geradas pelo seed)
 
@@ -122,22 +130,27 @@ imediatamente** (via `token_version` no JWT).
   **anexos** (prints, PDF, logs) — triagem de IA automática na criação.
 - **Meus chamados**: os próprios **+ os de toda a equipe abaixo**, com **filtro por
   solicitante**; timeline de comentários (sem ver notas internas), **baixar anexos**,
-  **comentar** e **avaliar (CSAT)** os próprios, e **cancelar** (o próprio ou o de um
-  subordinado, com justificativa).
+  **comentar** e **avaliar (CSAT)** os próprios, **cancelar** (o próprio ou o de um
+  subordinado, com justificativa) e **reabrir** um chamado encerrado.
 - **Minha equipe**: as pessoas abaixo na hierarquia, com contadores; clicar leva
   aos chamados daquela pessoa.
 - **Auto-cadastro** pela tela de login: a conta fica **pendente** até a aprovação
   de um administrador.
+- **Troca de senha obrigatória no 1º acesso** quando a conta foi criada pelo admin
+  (senha provisória).
 
 **Administrador**
 - **Painel**: KPIs (abertos, resolvidos, críticos, tempo médio, SLA vencido/risco,
   CSAT) e gráficos de gravidade, status, prioridade, **aging**, **SLA** e
-  **workload por responsável**.
-- **Gestão de chamados** (atende TODOS): fila filtrável por status, gravidade,
-  **SLA** e busca; modal em abas com triagem da IA (gravidade, confiança,
-  justificativa), **correção da classificação**, atribuição de responsável,
-  transição de status (máquina de estados), resposta pública, **nota interna**,
-  download de anexos e **encerramento** (causa raiz, solução, ação preventiva).
+  **workload por responsável** — com botão **Imprimir / PDF**.
+- **Gestão de chamados** (atende TODOS): fila **paginada**, filtrável por status,
+  gravidade, **SLA** e busca, com **exportação CSV**; modal em abas com triagem da
+  IA, **correção da classificação**, atribuição, transição de status (máquina de
+  estados), resposta pública, **nota interna**, anexos, **encerramento** (causa
+  raiz, solução, prevenção) e **Conhecimento** (chamados similares, busca na KB e
+  "promover a artigo").
+- **Kanban operacional**: arraste os cartões entre colunas para mudar o status
+  (validado pela máquina de estados); clique abre o chamado.
 - **Gestão de usuários**: criar/editar, ativar/desativar, **aprovar** cadastros
   pendentes, definir papel e supervisor.
 - **Trilha de auditoria**: quem fez o quê, quando e de onde.
@@ -156,6 +169,9 @@ imediatamente** (via `token_version` no JWT).
 
 ### Gestão de chamados (admin)
 ![Gestão de chamados](docs/telas/chamados.png)
+
+### Kanban operacional (admin)
+![Kanban](docs/telas/kanban.png)
 
 ### Gestão de usuários (admin)
 ![Gestão de usuários](docs/telas/usuarios.png)
@@ -213,6 +229,11 @@ O resto do sistema não muda. Se a IA real cair, o chamado é criado mesmo assim
 marcado como `versao_modelo="indisponivel"` e `confianca=0.0` — sinal explícito
 de que requer **triagem humana** (em vez de fingir uma classificação).
 
+> **Análises avançadas (futuras):** já existem **pontos de conexão comentados**
+> para a IA fazer análises extras — sugestão de resposta (copiloto), classificação
+> de sentimento, detecção de duplicados, resumo para handoff e previsão de risco
+> de SLA. Veja os blocos comentados em `ia.py` e `escalonamento.py`.
+
 ## Concorrência e robustez (SQLite)
 
 - **WAL mode** + `busy_timeout`: leituras não bloqueiam escritas; aberturas
@@ -221,21 +242,38 @@ de que requer **triagem humana** (em vez de fingir uma classificação).
   por `UPDATE` atômico — testado com 40 aberturas simultâneas, 0 duplicados.
 - **Optimistic locking**: `versao_linha` no chamado evita sobrescrita simultânea
   (responde **409** se o registro mudou desde que foi carregado).
-- **Rate limit** por usuário na abertura de chamado e **bloqueio temporário**
-  após tentativas de login falhas (defesa contra brute force).
+- **Rate limit / anti-brute-force PERSISTENTE** (`rate_limit.py`): a contagem de
+  tentativas de login e de aberturas de chamado fica em **tabela** (não em memória
+  de processo), então vale mesmo com `uvicorn --workers N`.
 - **Notificações assíncronas** desacopladas via `notificacoes.py` (canal de log
   hoje, pronto para Teams/Slack por webhook).
 
-## SLA (horário comercial)
+## SLA (horário comercial) e escalonamento automático
 
 O prazo de SLA é calculado em **horas úteis** (jornada e dias úteis
 configuráveis em `config.py`), não em horas corridas. O relógio **pausa** quando
-o chamado está em "aguardando usuário" (a responsabilidade está com o
-solicitante). Cada chamado expõe `sla_status`: `ok`, `em_risco` ou `vencido`.
+o chamado está em "aguardando usuário". Cada chamado expõe `sla_status`: `ok`,
+`em_risco` ou `vencido`.
+
+Um **job em background** (`escalonamento.py`) varre periodicamente os chamados em
+aberto com SLA **vencido** e ainda não escalados, e: marca-os, **notifica o
+superior** do responsável (ou a gestão) e registra na auditoria. Intervalo em
+`HELPDESK_ESCALONAMENTO_INTERVALO` (0 desativa).
+
+## Busca textual (FTS5) e base de conhecimento
+
+`busca.py` mantém índices **FTS5** nativos do SQLite (sincronizados por gatilhos),
+sem dependências externas nem embeddings:
+- **Chamados similares**: na aba *Conhecimento* do atendimento, sugere chamados
+  parecidos (apoio à deduplicação e ao reuso de solução).
+- **Base de conhecimento**: o admin pode **promover um chamado a artigo** e
+  **buscar** artigos por relevância (bm25).
 
 ## Segurança (considerações para ambiente bancário)
 
-- **Senhas** com hash bcrypt — nunca em texto puro.
+- **Senhas** com hash bcrypt — nunca em texto puro. **Política de complexidade**
+  (maiúscula, minúscula, número e símbolo) e **troca obrigatória no 1º acesso**
+  para contas criadas pelo admin (senha provisória).
 - **JWT** com expiração curta e **revogação imediata** por `token_version`.
   Token em `sessionStorage` (expira ao fechar o navegador).
 - **Sanitização de entrada** (Pydantic + escape de HTML) e **escape na
@@ -268,5 +306,7 @@ na primeira visita).
 | `HELPDESK_DATABASE_URL`           | `sqlite:///./helpdesk.db`  | URL do banco                       |
 | `HELPDESK_MAX_LOGIN_ATTEMPTS`     | `5`                        | Tentativas antes do bloqueio       |
 | `HELPDESK_MAX_CHAMADOS_MINUTO`    | `10`                       | Rate limit de abertura por usuário |
+| `HELPDESK_SENHA_COMPLEXIDADE`     | `1`                        | Exige senha forte (0 desativa)     |
+| `HELPDESK_ESCALONAMENTO_INTERVALO`| `300`                      | Intervalo do job de SLA (s; 0 off) |
 | `HELPDESK_SLA_HORA_INICIO` / `_FIM` | `8` / `18`               | Janela de horário comercial        |
 | `HELPDESK_UPLOAD_DIR`             | `./uploads`                | Pasta de anexos                    |

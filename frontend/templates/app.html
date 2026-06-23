@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Helpdesk Corporativo</title>
-    <link rel="stylesheet" href="/static/css/estilo.css?v=4">
-    <script src="/static/js/tema.js?v=4"></script>
+    <link rel="stylesheet" href="/static/css/estilo.css?v=6">
+    <script src="/static/js/tema.js?v=6"></script>
     <!-- Chart.js servido localmente seria o ideal em rede fechada; aqui via CDN.
          Em produção bancária, baixe o arquivo e sirva de /static. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -193,9 +193,12 @@
 
             <!-- PÁGINA: Dashboard (admin) -->
             <section class="pagina" id="pg-dashboard">
-                <div class="pagina-cabecalho">
-                    <h1>Painel de indicadores</h1>
-                    <p>Visão geral do volume, gravidade e tempo de resolução dos chamados.</p>
+                <div class="pagina-cabecalho" style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h1>Painel de indicadores</h1>
+                        <p>Visão geral do volume, gravidade e tempo de resolução dos chamados.</p>
+                    </div>
+                    <button id="btn-imprimir" class="btn btn-fantasma btn-mini">🖨 Imprimir / PDF</button>
                 </div>
 
                 <div class="grid-kpi">
@@ -288,6 +291,8 @@
                         <option value="ok">SLA ok</option>
                     </select>
                     <button id="btn-limpar-filtros" class="btn btn-fantasma btn-mini">Limpar</button>
+                    <span class="espaco-flex"></span>
+                    <button id="btn-exportar" class="btn btn-fantasma btn-mini">⭳ Exportar CSV</button>
                 </div>
 
                 <div class="tabela-wrap">
@@ -312,6 +317,20 @@
                         Nenhum chamado encontrado com os filtros atuais.
                     </div>
                 </div>
+                <div class="paginacao" id="paginacao-gestao">
+                    <button class="btn btn-fantasma btn-mini" id="pg-anterior">← Anterior</button>
+                    <span id="pg-info">Página 1</span>
+                    <button class="btn btn-fantasma btn-mini" id="pg-proxima">Próxima →</button>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Kanban (admin) -->
+            <section class="pagina" id="pg-kanban">
+                <div class="pagina-cabecalho">
+                    <h1>Kanban operacional</h1>
+                    <p>Arraste os cartões entre as colunas para mudar o status. Clique para abrir.</p>
+                </div>
+                <div class="kanban" id="kanban-board"></div>
             </section>
 
             <!-- PÁGINA: Gestão de usuários (admin) -->
@@ -381,7 +400,7 @@
         </div>
     </div>
 
-    <script src="/static/js/api.js?v=5"></script>
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/api.js?v=6"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

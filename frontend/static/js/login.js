@@ -38,7 +38,7 @@
 
         try {
             const r = await API.login(matricula, senha);
-            API.salvarSessao(r.access_token, r.id, r.nome, r.nivel_acesso, r.papel);
+            API.salvarSessao(r.access_token, r.id, r.nome, r.nivel_acesso, r.papel, r.senha_provisoria);
             window.location.href = '/app';
         } catch (e) {
             mostrarErro(e.message);

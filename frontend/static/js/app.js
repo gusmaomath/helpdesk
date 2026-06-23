@@ -66,6 +66,7 @@
         ? [
             { id: 'dashboard', ico: '📊', rotulo: 'Painel' },
             { id: 'gestao', ico: '🗂️', rotulo: 'Chamados' },
+            { id: 'kanban', ico: '🔲', rotulo: 'Kanban' },
             { id: 'usuarios', ico: '👥', rotulo: 'Usuários' },
             { id: 'auditoria', ico: '📜', rotulo: 'Auditoria' },
           ]
@@ -93,6 +94,7 @@
         if (pagina === 'meus') carregarMeusChamados();
         if (pagina === 'equipe') carregarEquipe();
         if (pagina === 'gestao') carregarGestao();
+        if (pagina === 'kanban') carregarKanban();
         if (pagina === 'dashboard') carregarDashboard();
         if (pagina === 'usuarios') carregarUsuarios();
         if (pagina === 'auditoria') carregarAuditoria();
@@ -396,11 +398,27 @@
                     <button class="btn btn-perigo btn-mini" id="user-confirmar-cancelar">Confirmar cancelamento</button>
                 </div>
             </div>` : ''}
+            ${meu && encerrado ? `
+            <div class="detalhe-linha" style="margin-top:18px;border-top:1px solid var(--cor-borda);padding-top:16px;">
+                <button class="btn btn-fantasma btn-mini" id="user-reabrir">↺ Reabrir chamado</button>
+                <div class="ajuda">Reabra se o problema voltou ou não foi resolvido.</div>
+            </div>` : ''}
             <div id="modal-alerta" class="alerta"></div>`;
 
         document.getElementById('modal-rodape').innerHTML =
             `<button class="btn btn-secundario" id="fechar-rodape">Fechar</button>`;
         document.getElementById('fechar-rodape').addEventListener('click', fecharModal);
+
+        const btnReabrir = document.getElementById('user-reabrir');
+        if (btnReabrir) btnReabrir.addEventListener('click', async () => {
+            if (!confirm('Reabrir este chamado?')) return;
+            try {
+                await API.reabrir(id);
+                meusChamadosCache = await API.meusChamados();
+                renderMeus();
+                abrirModalUsuario(id);
+            } catch (e) { alertaModal(e.message); }
+        });
 
         const btnComent = document.getElementById('user-enviar-coment');
         if (btnComent) btnComent.addEventListener('click', async () => {
@@ -439,6 +457,9 @@
     // ================================================================== //
     // EQUIPE / ADMIN — Gestão de chamados
     // ================================================================== //
+    const TAM_PAGINA = 25;
+    let paginaGestao = 0;
+
     async function carregarGestao() {
         const corpo = document.getElementById('corpo-gestao');
         const vazio = document.getElementById('vazio-gestao');
@@ -448,9 +469,16 @@
             gravidade: document.getElementById('filtro-gravidade').value,
             sla: document.getElementById('filtro-sla').value,
             busca: document.getElementById('filtro-busca').value.trim(),
+            limite: TAM_PAGINA,
+            offset: paginaGestao * TAM_PAGINA,
         };
         try {
             const chamados = await API.todosChamados(filtros);
+            // Atualiza controles de paginação.
+            document.getElementById('pg-info').textContent = `Página ${paginaGestao + 1}`;
+            document.getElementById('pg-anterior').disabled = paginaGestao === 0;
+            document.getElementById('pg-proxima').disabled = chamados.length < TAM_PAGINA;
+
             corpo.innerHTML = '';
             if (!chamados.length) { vazio.style.display = 'block'; return; }
             vazio.style.display = 'none';
@@ -502,6 +530,7 @@
             <div class="abas">
                 <button type="button" class="aba ativa" data-aba="atendimento">Atendimento</button>
                 <button type="button" class="aba" data-aba="triagem">Triagem &amp; classificação</button>
+                <button type="button" class="aba" data-aba="conhecimento">Conhecimento</button>
                 <button type="button" class="aba" data-aba="historico">Histórico</button>
             </div>
 
@@ -563,6 +592,22 @@
                 </div>
             </div>
 
+            <!-- ABA: CONHECIMENTO (similares + KB + promover) -->
+            <div class="aba-painel" id="painel-conhecimento" style="display:none;">
+                <div class="detalhe-linha"><div class="rot">Chamados similares (IA / FTS)</div>
+                    <div id="m-similares"><span style="color:var(--cor-texto-suave);">Buscando...</span></div></div>
+                <div class="detalhe-linha"><div class="rot">Base de conhecimento</div>
+                    <div class="barra-ferramentas" style="margin-bottom:10px;">
+                        <input type="search" id="m-kb-busca" placeholder="Buscar artigos...">
+                        <button class="btn btn-fantasma btn-mini" id="m-kb-buscar">Buscar</button>
+                    </div>
+                    <div id="m-kb-resultados"></div></div>
+                <div class="detalhe-linha"><div class="rot">Promover este chamado a artigo</div>
+                    <div class="campo"><input id="m-art-titulo" placeholder="Título do artigo" value="${esc(c.titulo)}"></div>
+                    <div class="campo"><textarea id="m-art-conteudo" placeholder="Solução / passos para resolver..." style="min-height:80px;">${esc(c.solucao_aplicada || '')}</textarea></div>
+                    <button class="btn btn-secundario btn-mini" id="m-art-criar">Salvar na base de conhecimento</button></div>
+            </div>
+
             <!-- ABA: HISTÓRICO -->
             <div class="aba-painel" id="painel-historico" style="display:none;">
                 ${renderTimeline(c.comentarios)}
@@ -586,6 +631,43 @@
         preencherSelectCategorias(selCat, cats, c.categoria_id);
         preencherSelectSubcategorias(selSub, cats, c.categoria_id, c.subcategoria_id);
         selCat.onchange = () => preencherSelectSubcategorias(selSub, cats, selCat.value);
+
+        // --- Aba Conhecimento: similares, KB e promover a artigo ---
+        function renderListaChamados(arr) {
+            if (!arr.length) return '<span style="color:var(--cor-texto-suave);">Nenhum encontrado.</span>';
+            return arr.map(s => `<div class="kb-item"><span class="similar-link" data-cid="${s.id}">🔗 ${esc(s.numero_protocolo || '#' + s.id)} — ${esc(s.titulo)}</span> ${chipStatus(s.status)}</div>`).join('');
+        }
+        API.similares(id).then(sim => {
+            const el = document.getElementById('m-similares');
+            if (el) {
+                el.innerHTML = renderListaChamados(sim);
+                el.querySelectorAll('.similar-link').forEach(l =>
+                    l.addEventListener('click', () => abrirModalAdmin(+l.dataset.cid)));
+            }
+        }).catch(() => {});
+
+        function renderKb(arr) {
+            const el = document.getElementById('m-kb-resultados');
+            el.innerHTML = arr.length
+                ? arr.map(a => `<div class="kb-item"><div class="kb-titulo">${esc(a.titulo)}</div><div>${esc(a.conteudo)}</div></div>`).join('')
+                : '<span style="color:var(--cor-texto-suave);">Nenhum artigo.</span>';
+        }
+        const fazerBuscaKb = async () => {
+            try { renderKb(await API.buscarKb(document.getElementById('m-kb-busca').value.trim())); }
+            catch (e) { /* silencioso */ }
+        };
+        document.getElementById('m-kb-buscar').addEventListener('click', fazerBuscaKb);
+        document.getElementById('m-art-criar').addEventListener('click', async () => {
+            const titulo = document.getElementById('m-art-titulo').value.trim();
+            const conteudo = document.getElementById('m-art-conteudo').value.trim();
+            if (titulo.length < 4 || conteudo.length < 10)
+                return alertaModal('Informe título e conteúdo do artigo.');
+            try {
+                await API.promoverArtigo(id, titulo, conteudo);
+                alertaModal('Artigo salvo na base de conhecimento.');
+                document.getElementById('modal-alerta').className = 'alerta sucesso visivel';
+            } catch (e) { alertaModal(e.message); }
+        });
 
         document.getElementById('modal-rodape').innerHTML = `
             <button class="btn btn-fantasma" id="m-cancelar">Fechar</button>
@@ -644,17 +726,112 @@
 
     if (ehAdmin) {
         let debounce;
+        const recarregar = () => { paginaGestao = 0; carregarGestao(); };
         const f = document.getElementById('filtro-busca');
         if (f) {
-            f.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(carregarGestao, 350); });
-            document.getElementById('filtro-status').addEventListener('change', carregarGestao);
-            document.getElementById('filtro-gravidade').addEventListener('change', carregarGestao);
-            document.getElementById('filtro-sla').addEventListener('change', carregarGestao);
+            f.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(recarregar, 350); });
+            document.getElementById('filtro-status').addEventListener('change', recarregar);
+            document.getElementById('filtro-gravidade').addEventListener('change', recarregar);
+            document.getElementById('filtro-sla').addEventListener('change', recarregar);
             document.getElementById('btn-limpar-filtros').addEventListener('click', () => {
                 ['filtro-busca', 'filtro-status', 'filtro-gravidade', 'filtro-sla'].forEach(id => document.getElementById(id).value = '');
-                carregarGestao();
+                recarregar();
+            });
+            document.getElementById('pg-anterior').addEventListener('click', () => {
+                if (paginaGestao > 0) { paginaGestao--; carregarGestao(); }
+            });
+            document.getElementById('pg-proxima').addEventListener('click', () => {
+                paginaGestao++; carregarGestao();
+            });
+            document.getElementById('btn-exportar').addEventListener('click', async () => {
+                try {
+                    const blob = await API.baixarCsv();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = 'chamados.csv';
+                    document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 5000);
+                } catch (e) { alert(e.message); }
             });
         }
+        const btnImp = document.getElementById('btn-imprimir');
+        if (btnImp) btnImp.addEventListener('click', () => window.print());
+    }
+
+    // ================================================================== //
+    // KANBAN (admin) — arrastar cartões entre colunas muda o status
+    // ================================================================== //
+    const KANBAN_COLUNAS = [
+        { status: 'aberto', titulo: 'Aberto' },
+        { status: 'em_andamento', titulo: 'Em andamento' },
+        { status: 'aguardando_usuario', titulo: 'Aguardando usuário' },
+        { status: 'resolvido', titulo: 'Resolvido' },
+    ];
+
+    async function carregarKanban() {
+        const board = document.getElementById('kanban-board');
+        board.innerHTML = '<div style="padding:20px;color:var(--cor-texto-suave);">Carregando...</div>';
+        let chamados;
+        try { chamados = await API.todosChamados({ limite: 500 }); }
+        catch (e) { board.innerHTML = `<div style="padding:20px;color:#b3261e;">${esc(e.message)}</div>`; return; }
+
+        const porStatus = {};
+        KANBAN_COLUNAS.forEach(col => porStatus[col.status] = []);
+        chamados.forEach(c => { if (porStatus[c.status]) porStatus[c.status].push(c); });
+
+        board.innerHTML = '';
+        KANBAN_COLUNAS.forEach(col => {
+            const lista = porStatus[col.status];
+            const coluna = document.createElement('div');
+            coluna.className = 'kanban-coluna';
+            coluna.dataset.status = col.status;
+            coluna.innerHTML = `<h4>${esc(col.titulo)} <span class="qtd">${lista.length}</span></h4>`;
+            lista.forEach(c => coluna.appendChild(criarCardKanban(c)));
+
+            // Alvos de drop.
+            coluna.addEventListener('dragover', e => { e.preventDefault(); coluna.classList.add('alvo'); });
+            coluna.addEventListener('dragleave', () => coluna.classList.remove('alvo'));
+            coluna.addEventListener('drop', async e => {
+                e.preventDefault();
+                coluna.classList.remove('alvo');
+                const dados = JSON.parse(e.dataTransfer.getData('text/plain') || '{}');
+                if (!dados.id || dados.status === col.status) return;
+                try {
+                    await API.alterarStatus(dados.id, col.status, dados.versao);
+                    carregarKanban();
+                } catch (err) {
+                    alert(err.message);
+                    carregarKanban();
+                }
+            });
+            board.appendChild(coluna);
+        });
+    }
+
+    function criarCardKanban(c) {
+        const card = document.createElement('div');
+        card.className = 'kanban-card';
+        card.draggable = true;
+        card.innerHTML = `
+            <div class="kc-topo">
+                <span class="kc-proto">${esc(c.numero_protocolo || '#' + c.id)}</span>
+                ${chipPrioridade(c.prioridade)}
+            </div>
+            <div class="kc-titulo">${esc(c.titulo)}</div>
+            <div class="kc-rodape">
+                ${chipGravidade(c.gravidade)}
+                ${chipSla(c.sla_status)}
+            </div>`;
+        card.addEventListener('dragstart', e => {
+            card.classList.add('arrastando');
+            e.dataTransfer.setData('text/plain', JSON.stringify({
+                id: c.id, versao: c.versao_linha, status: c.status,
+            }));
+        });
+        card.addEventListener('dragend', () => card.classList.remove('arrastando'));
+        // Clique abre o popup com todas as informações + descrição.
+        card.addEventListener('click', () => abrirModalAdmin(c.id));
+        return card;
     }
 
     // ================================================================== //
@@ -951,12 +1128,56 @@
     // MODAL (genérico)
     // ================================================================== //
     const $modalFundo = document.getElementById('modal-fundo');
+    let senhaObrigatoria = false;  // bloqueia o fechamento na troca forçada
     function mostrarModal() { $modalFundo.classList.add('visivel'); }
-    function fecharModal() { $modalFundo.classList.remove('visivel'); }
+    function fecharModal() { if (!senhaObrigatoria) $modalFundo.classList.remove('visivel'); }
     document.getElementById('modal-fechar').addEventListener('click', fecharModal);
     $modalFundo.addEventListener('click', e => { if (e.target === $modalFundo) fecharModal(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharModal(); });
 
+    // ================================================================== //
+    // TROCA DE SENHA (obrigatória no 1º acesso, ou voluntária)
+    // ================================================================== //
+    function abrirTrocaSenha(obrigatoria) {
+        senhaObrigatoria = !!obrigatoria;
+        document.getElementById('modal-titulo').textContent =
+            obrigatoria ? '🔒 Defina uma nova senha' : 'Trocar senha';
+        document.getElementById('modal-fechar').style.display = obrigatoria ? 'none' : '';
+        document.getElementById('modal-corpo').innerHTML = `
+            ${obrigatoria ? '<div class="alerta erro visivel" style="display:block;">Sua senha é provisória. Defina uma nova senha para continuar.</div>' : ''}
+            <div class="campo"><label>Senha atual</label><input id="ts-atual" type="password" autocomplete="current-password"></div>
+            <div class="campo"><label>Nova senha</label><input id="ts-nova" type="password" autocomplete="new-password"></div>
+            <div class="ajuda">Mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo.</div>
+            <div class="campo"><label>Confirmar nova senha</label><input id="ts-conf" type="password" autocomplete="new-password"></div>
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML =
+            `${obrigatoria ? '' : '<button class="btn btn-fantasma" id="ts-cancelar">Cancelar</button>'}
+             <button class="btn btn-primario" id="ts-salvar">Salvar senha</button>`;
+        const cancelar = document.getElementById('ts-cancelar');
+        if (cancelar) cancelar.addEventListener('click', fecharModal);
+        document.getElementById('ts-salvar').addEventListener('click', async () => {
+            const atual = document.getElementById('ts-atual').value;
+            const nova = document.getElementById('ts-nova').value;
+            const conf = document.getElementById('ts-conf').value;
+            if (nova !== conf) return alertaModal('A confirmação não confere.');
+            const btn = document.getElementById('ts-salvar');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Salvando...';
+            try {
+                await API.trocarSenha(atual, nova);
+                API.marcarSenhaTrocada();
+                senhaObrigatoria = false;
+                document.getElementById('modal-fechar').style.display = '';
+                fecharModal();
+            } catch (e) {
+                alertaModal(e.message);
+                btn.disabled = false; btn.textContent = 'Salvar senha';
+            }
+        });
+        mostrarModal();
+    }
+
     // --- Inicialização ---
     navegar(ehAdmin ? 'dashboard' : 'abrir');
+    // Primeiro acesso com senha provisória: força a troca antes de usar o sistema.
+    if (usuario.senhaProvisoria) abrirTrocaSenha(true);
 })();

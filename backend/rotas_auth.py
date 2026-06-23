@@ -1,34 +1,49 @@
 """
 Rotas de autenticação.
 
-POST /api/auth/login   -> autentica e devolve JWT (com bloqueio anti-brute-force)
-GET  /api/auth/me      -> retorna dados do usuário logado
+POST /api/auth/login         -> autentica e devolve JWT (anti-brute-force em tabela)
+POST /api/auth/registrar     -> auto-cadastro (conta pendente de aprovação)
+POST /api/auth/trocar-senha  -> troca de senha (obrigatória se provisória)
+GET  /api/auth/me            -> dados do usuário logado
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 import auditoria
+import rate_limit
 from auth import (
-    controle_tentativas,
     criar_token_acesso,
     gerar_hash_senha,
     ip_requisicao,
     obter_usuario_atual,
+    validar_senha_forte,
     verificar_senha,
 )
+from config import config
 from database import get_db
 from models import NivelAcesso, Papel, Usuario
-from schemas import AutoCadastro, LoginRequest, TokenResponse, UsuarioResposta
+from schemas import (
+    AutoCadastro,
+    LoginRequest,
+    TokenResponse,
+    TrocarSenha,
+    UsuarioResposta,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["Autenticação"])
+
+TIPO_LOGIN = "login_falha"
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
     chave = dados.matricula.lower()
 
-    # 1) Bloqueio temporário por excesso de tentativas (defesa brute force).
-    if controle_tentativas.bloqueado(chave):
+    # 1) Bloqueio temporário por excesso de tentativas (persistente, em tabela).
+    if rate_limit.excedeu(
+        db, TIPO_LOGIN, chave,
+        config.MAX_LOGIN_ATTEMPTS, config.LOGIN_BLOQUEIO_SEGUNDOS,
+    ):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Muitas tentativas. Tente novamente em alguns minutos.",
@@ -46,8 +61,7 @@ def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
         or usuario.ativo != 1
         or not verificar_senha(dados.senha, usuario.senha_hash)
     ):
-        controle_tentativas.registrar_falha(chave)
-        # Auditoria de falha de login (sem revelar qual usuário).
+        rate_limit.registrar(db, TIPO_LOGIN, chave)
         auditoria.registrar(
             db, usuario=None, acao="login_falha", entidade="usuario",
             detalhe={"matricula": dados.matricula}, ip=ip_requisicao(request),
@@ -55,7 +69,7 @@ def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
         )
         raise erro_generico
 
-    controle_tentativas.limpar(chave)
+    rate_limit.limpar(db, TIPO_LOGIN, chave)
     token = criar_token_acesso(usuario)
     auditoria.registrar(
         db, usuario=usuario, acao="login_sucesso", entidade="usuario",
@@ -68,6 +82,7 @@ def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
         nome=usuario.nome,
         nivel_acesso=usuario.nivel_acesso,
         papel=usuario.papel,
+        senha_provisoria=bool(usuario.senha_provisoria),
     )
 
 
@@ -75,8 +90,7 @@ def login(dados: LoginRequest, request: Request, db: Session = Depends(get_db)):
 def registrar(dados: AutoCadastro, request: Request, db: Session = Depends(get_db)):
     """
     Auto-cadastro público. O usuário é criado SEMPRE como colaborador e
-    INATIVO (ativo=0): só passa a acessar após um administrador APROVAR na
-    tela de gestão de usuários. Isso evita criação livre de contas com acesso.
+    INATIVO (ativo=0): só acessa após um administrador aprovar.
     """
     if db.query(Usuario).filter(Usuario.matricula == dados.matricula).first():
         raise HTTPException(status_code=409, detail="Matrícula já cadastrada.")
@@ -103,6 +117,32 @@ def registrar(dados: AutoCadastro, request: Request, db: Session = Depends(get_d
         "detail": "Cadastro recebido! Aguarde a aprovação de um administrador "
                   "para acessar o sistema.",
     }
+
+
+@router.post("/trocar-senha")
+def trocar_senha(
+    dados: TrocarSenha,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Troca a própria senha. Obrigatória quando `senha_provisoria` é True
+    (primeiro acesso de contas criadas pelo admin).
+    """
+    if not verificar_senha(dados.senha_atual, usuario.senha_hash):
+        raise HTTPException(status_code=401, detail="Senha atual incorreta.")
+    if verificar_senha(dados.nova_senha, usuario.senha_hash):
+        raise HTTPException(status_code=422, detail="A nova senha deve ser diferente da atual.")
+
+    usuario.senha_hash = gerar_hash_senha(dados.nova_senha)
+    usuario.senha_provisoria = False
+    auditoria.registrar(
+        db, usuario=usuario, acao="senha_trocada", entidade="usuario",
+        entidade_id=usuario.id, ip=ip_requisicao(request),
+    )
+    db.commit()
+    return {"detail": "Senha atualizada com sucesso."}
 
 
 @router.get("/me", response_model=UsuarioResposta)

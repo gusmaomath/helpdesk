@@ -42,6 +42,10 @@ logger = logging.getLogger("helpdesk")
 # Em produção, gerencie o schema com Alembic (ver README/observações).
 Base.metadata.create_all(bind=engine)
 
+# Índices de busca textual (FTS5) — tabelas virtuais + gatilhos de sincronia.
+import busca  # noqa: E402
+busca.garantir_fts(engine)
+
 app = FastAPI(
     title="Helpdesk Corporativo",
     description="Sistema interno de abertura e gestão de chamados.",
@@ -124,3 +128,11 @@ def pagina_app():
 def health_check():
     """Endpoint simples para monitoramento de disponibilidade."""
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+def _iniciar_jobs():
+    """Sobe o verificador de SLA em background (escalonamento automático)."""
+    import escalonamento
+    escalonamento.iniciar_em_background()
+    logger.info("Jobs de background iniciados (escalonamento de SLA).")

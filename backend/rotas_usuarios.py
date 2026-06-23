@@ -70,6 +70,8 @@ def criar(
         unidade_setor=dados.unidade_setor,
         email=dados.email,
         ramal=dados.ramal,
+        # Senha definida pelo admin é provisória: o usuário troca no 1º acesso.
+        senha_provisoria=True,
     )
     db.add(usuario)
     db.flush()
@@ -129,6 +131,7 @@ def atualizar(
             revogar = True
     if dados.nova_senha is not None:
         usuario.senha_hash = gerar_hash_senha(dados.nova_senha)
+        usuario.senha_provisoria = True  # força troca no próximo acesso
         revogar = True
 
     if revogar:

@@ -150,6 +150,10 @@ class Usuario(Base):
     # Versão do token: incrementar invalida JWTs antigos (revogação imediata).
     token_version = Column(Integer, default=0, nullable=False)
 
+    # Senha provisória: força troca no primeiro acesso (auto-cadastro / criação
+    # pelo admin). Enquanto True, o usuário só pode trocar a senha.
+    senha_provisoria = Column(Boolean, default=False, nullable=False)
+
     chamados = relationship(
         "Chamado",
         back_populates="autor",
@@ -260,6 +264,8 @@ class Chamado(Base):
     sla_segundos_pausado = Column(Integer, default=0, nullable=False)
     # Marca quando entrou no estado pausado (para somar ao despausar).
     sla_pausado_em = Column(DateTime(timezone=True), nullable=True)
+    # Carimbo de quando o SLA vencido já foi escalado (evita notificar em loop).
+    sla_escalado_em = Column(DateTime(timezone=True), nullable=True)
 
     # --- Timestamps ---
     criado_em = Column(
@@ -374,3 +380,40 @@ class Auditoria(Base):
     )
 
     usuario = relationship("Usuario")
+
+
+# --------------------------------------------------------------------------- #
+# Base de conhecimento (artigos promovidos a partir de chamados resolvidos)
+# --------------------------------------------------------------------------- #
+class Artigo(Base):
+    __tablename__ = "artigos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    titulo = Column(String(180), nullable=False)
+    conteudo = Column(Text, nullable=False)
+    chamado_origem_id = Column(Integer, ForeignKey("chamados.id"), nullable=True)
+    criado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    criado_em = Column(DateTime(timezone=True), default=agora_utc, nullable=False)
+    atualizado_em = Column(
+        DateTime(timezone=True), default=agora_utc, onupdate=agora_utc, nullable=False
+    )
+
+    criado_por = relationship("Usuario")
+
+
+# --------------------------------------------------------------------------- #
+# Rate-limit / brute force PERSISTENTE (em tabela, não em memória de processo).
+# Cada tentativa relevante vira uma linha; a contagem por janela define bloqueio.
+# Funciona mesmo com múltiplos workers do uvicorn (o estado é o banco).
+# --------------------------------------------------------------------------- #
+class RegistroRate(Base):
+    __tablename__ = "registros_rate"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # tipo: "login_falha" | "abertura_chamado"
+    tipo = Column(String(40), nullable=False, index=True)
+    # chave: matrícula (login) ou id do usuário (abertura)
+    chave = Column(String(80), nullable=False, index=True)
+    criado_em = Column(
+        DateTime(timezone=True), default=agora_utc, nullable=False, index=True
+    )
