@@ -19,10 +19,11 @@ import random
 import sys
 from datetime import timedelta
 
-from auth import gerar_hash_senha
-from database import Base, SessionLocal, engine
-from ia import analisar_chamado
-from models import (
+from app.security.auth import gerar_hash_senha
+from app.database import Base, SessionLocal, engine
+from app.services.ia import analisar_chamado
+from app.models import (
+    Artigo,
     Categoria,
     Chamado,
     Gravidade,
@@ -35,8 +36,8 @@ from models import (
     Usuario,
     agora_utc,
 )
-from protocolo import gerar_protocolo
-from sla import calcular_prazo
+from app.services.protocolo import gerar_protocolo
+from app.services.sla import calcular_prazo
 
 TAXONOMIA = {
     "Sistema": ["Erro de resposta", "Tela travando", "Integração"],
@@ -70,10 +71,53 @@ EXEMPLOS = [
 ]
 
 
+ARTIGOS = [
+    ("PIX fora do ar: o que fazer antes de abrir chamado",
+     "1) Confirme no painel de status interno se a indisponibilidade do PIX já é "
+     "conhecida. 2) Aguarde alguns minutos — quedas curtas costumam se "
+     "restabelecer sozinhas. 3) Se passar de 15 minutos ou afetar transações de "
+     "clientes, abra um chamado com gravidade crítica informando agência, horário "
+     "de início e quantos usuários afetados."),
+    ("Senha do e-mail bloqueada ou acesso negado",
+     "Acesse o Portal Interno e clique em 'Esqueci minha senha' para receber o "
+     "link de redefinição no e-mail alternativo. Se a conta estiver bloqueada por "
+     "tentativas, aguarde 15 minutos e tente novamente. Persistindo, abra um "
+     "chamado na categoria Acesso informando sua matrícula."),
+    ("VPN cai com frequência",
+     "Verifique a estabilidade da sua conexão (Wi-Fi x cabo). Feche e reabra o "
+     "cliente de VPN. Se as quedas continuarem, registre os horários aproximados "
+     "das desconexões e abra um chamado na categoria Infraestrutura — isso ajuda "
+     "a equipe a correlacionar com instabilidades de rede."),
+    ("Erro ao salvar cadastro no CRM",
+     "Confirme se todos os campos obrigatórios estão preenchidos e se não há "
+     "caracteres especiais no nome/razão social. Tente novamente após recarregar "
+     "a tela. Se o erro persistir, anote a mensagem exata e a tela onde ocorre e "
+     "abra um chamado na categoria Sistema com o print do erro."),
+    ("Como solicitar instalação de software",
+     "Softwares homologados podem ser instalados pela Central de Software. Para "
+     "itens fora do catálogo, abra um chamado na categoria Solicitação informando "
+     "o nome do software, a finalidade e a aprovação do seu gestor, se exigida."),
+    ("Impressora ou periférico não funciona",
+     "Verifique cabos e se o equipamento está ligado. Reinicie o computador. Para "
+     "impressoras de rede, confirme se você selecionou a fila correta. Se não "
+     "resolver, abra um chamado na categoria Hardware indicando o número de "
+     "patrimônio do equipamento."),
+]
+
+
 def _reset():
     print("Apagando e recriando o schema...")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+
+def criar_kb(db, autor):
+    if db.query(Artigo).first():
+        return
+    print("Criando base de conhecimento de exemplo...")
+    for titulo, conteudo in ARTIGOS:
+        db.add(Artigo(titulo=titulo, conteudo=conteudo, criado_por_id=autor.id))
+    db.commit()
 
 
 def criar_usuario(db, nome, matricula, senha, nivel, papel, supervisor=None,
@@ -217,6 +261,8 @@ def executar_seed(reset: bool = False) -> None:
                 )
         else:
             print("  - Já existem chamados, pulando criação.")
+
+        criar_kb(db, admin)
 
         print("\nSeed concluído com sucesso!")
         print("-" * 56)

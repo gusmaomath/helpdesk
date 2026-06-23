@@ -22,7 +22,7 @@ Endpoints:
 """
 import csv
 import io
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -30,22 +30,22 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-import auditoria
-import busca
-from auth import (
+from app.services import auditoria
+from app.services import busca
+from app.security.auth import (
     exigir_admin,
     ip_requisicao,
     obter_usuario_atual,
     verificar_senha,
 )
-from database import get_db
-from estado import (
+from app.database import get_db
+from app.services.estado import (
     ESTADOS_ENCERRADOS,
     ESTADOS_PAUSA_SLA,
     proximos_status,
     transicao_valida,
 )
-from models import (
+from app.models import (
     Artigo,
     Auditoria,
     Categoria,
@@ -57,8 +57,9 @@ from models import (
     Usuario,
     agora_utc,
 )
-from notificacoes import notificar
-from schemas import (
+from app.services.notificacoes import notificar
+from app.schemas import (
+    AcaoMassa,
     ArtigoCriar,
     ArtigoResposta,
     CategoriaCriar,
@@ -74,8 +75,8 @@ from schemas import (
     ConfirmacaoCredencial,
     SubcategoriaCriar,
 )
-from serializar import serializar_chamado, serializar_detalhe
-from sla import faixa_aging, status_sla
+from app.services.serializar import serializar_chamado, serializar_detalhe
+from app.services.sla import faixa_aging, status_sla
 
 # TODO o painel administrativo é restrito a ADMINISTRADOR. A dependência no
 # nível do router garante isso em todas as rotas abaixo — não há escopo por
@@ -96,8 +97,11 @@ def listar_chamados(
     usuario: Usuario = Depends(obter_usuario_atual),
     status_filtro: Optional[StatusChamado] = Query(None, alias="status"),
     gravidade_filtro: Optional[Gravidade] = Query(None, alias="gravidade"),
+    categoria: Optional[int] = Query(None),
     atribuido: Optional[int] = Query(None),
     sla: Optional[str] = Query(None, description="ok | em_risco | vencido"),
+    de: Optional[str] = Query(None, description="data inicial YYYY-MM-DD"),
+    ate: Optional[str] = Query(None, description="data final YYYY-MM-DD"),
     busca: Optional[str] = Query(None, max_length=150),
     limite: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -108,8 +112,22 @@ def listar_chamados(
         query = query.filter(Chamado.status == status_filtro)
     if gravidade_filtro is not None:
         query = query.filter(Chamado.gravidade == gravidade_filtro)
+    if categoria is not None:
+        query = query.filter(Chamado.categoria_id == categoria)
     if atribuido is not None:
         query = query.filter(Chamado.atribuido_a_id == atribuido)
+    if de:
+        try:
+            query = query.filter(Chamado.criado_em >= datetime.fromisoformat(de))
+        except ValueError:
+            pass
+    if ate:
+        try:
+            # inclui o dia inteiro de 'ate'
+            fim = datetime.fromisoformat(ate)
+            query = query.filter(Chamado.criado_em <= fim.replace(hour=23, minute=59, second=59))
+        except ValueError:
+            pass
     if busca:
         termo = f"%{busca.strip()}%"
         query = query.filter(
@@ -137,6 +155,67 @@ def _buscar_chamado(db: Session, chamado_id: int) -> Chamado:
     if chamado is None:
         raise HTTPException(404, "Chamado não encontrado.")
     return chamado
+
+
+@router.post("/chamados/acao-massa")
+def acao_em_massa(
+    dados: AcaoMassa,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Aplica uma ação a vários chamados de uma vez: atribuir responsável, mudar
+    status (validado pela máquina de estados) ou cancelar (com motivo). Cada
+    item é processado individualmente; transições inválidas são puladas.
+    """
+    chamados = (
+        db.query(Chamado)
+        .filter(Chamado.id.in_(dados.ids), Chamado.excluido_em.is_(None))
+        .all()
+    )
+    aplicados, pulados = 0, 0
+    novo_status = None
+    if dados.acao in ("status", "cancelar"):
+        try:
+            novo_status = (
+                StatusChamado.CANCELADO if dados.acao == "cancelar"
+                else StatusChamado(dados.valor)
+            )
+        except ValueError:
+            raise HTTPException(422, "Status inválido.")
+    if dados.acao == "cancelar" and (not dados.motivo or len(dados.motivo.strip()) < 5):
+        raise HTTPException(422, "Informe um motivo (mín. 5 caracteres) para cancelar.")
+
+    for c in chamados:
+        if dados.acao == "atribuir":
+            c.atribuido_a_id = int(dados.valor) if dados.valor else None
+            c.versao_linha += 1
+            aplicados += 1
+        else:  # status / cancelar
+            if not transicao_valida(c.status, novo_status):
+                pulados += 1
+                continue
+            if novo_status in ESTADOS_ENCERRADOS and c.resolvido_em is None:
+                c.resolvido_em = agora_utc()
+            elif novo_status not in ESTADOS_ENCERRADOS:
+                c.resolvido_em = None
+            if dados.acao == "cancelar":
+                db.add(Comentario(
+                    chamado_id=c.id, autor_id=usuario.id, interno=False,
+                    corpo=f"Chamado cancelado em lote. Motivo: {dados.motivo.strip()}",
+                ))
+            c.status = novo_status
+            c.versao_linha += 1
+            aplicados += 1
+
+    auditoria.registrar(
+        db, usuario=usuario, acao="acao_em_massa", entidade="chamado",
+        detalhe={"acao": dados.acao, "qtd": aplicados, "pulados": pulados},
+        ip=ip_requisicao(request),
+    )
+    db.commit()
+    return {"aplicados": aplicados, "pulados": pulados}
 
 
 @router.get("/chamados/{chamado_id}", response_model=ChamadoDetalhe)
@@ -381,11 +460,19 @@ def dashboard(
     total_horas = 0.0
     n_resolvidos = 0
     csat_soma = csat_n = 0
+    # SLA cumprido: entre os resolvidos com prazo, quantos dentro do prazo.
+    sla_com_prazo = sla_no_prazo = 0
+    # CSAT detalhado: nome -> [soma, n]
+    csat_analista: dict[str, list] = {}
+    csat_categoria: dict[str, list] = {}
 
     abertos_status = {
         StatusChamado.ABERTO, StatusChamado.EM_ANDAMENTO,
         StatusChamado.AGUARDANDO_USUARIO, StatusChamado.REABERTO,
     }
+
+    def _aware(dt):
+        return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
 
     for c in chamados:
         por_status[c.status.value] += 1
@@ -402,23 +489,32 @@ def dashboard(
         if c.status in (StatusChamado.RESOLVIDO, StatusChamado.FECHADO):
             resolvidos += 1
         if c.resolvido_em is not None:
-            criado = c.criado_em
-            resolvido = c.resolvido_em
-            if criado.tzinfo is None:
-                criado = criado.replace(tzinfo=timezone.utc)
-            if resolvido.tzinfo is None:
-                resolvido = resolvido.replace(tzinfo=timezone.utc)
+            criado = _aware(c.criado_em)
+            resolvido = _aware(c.resolvido_em)
             delta = (resolvido - criado).total_seconds() / 3600.0
             if delta >= 0:
                 total_horas += delta; n_resolvidos += 1
+            # Cumprimento de SLA (resolvido <= prazo).
+            if c.sla_prazo is not None:
+                sla_com_prazo += 1
+                if resolvido <= _aware(c.sla_prazo):
+                    sla_no_prazo += 1
         if c.avaliacao is not None:
             csat_soma += c.avaliacao.nota; csat_n += 1
+            quem = c.atribuido_a.nome if c.atribuido_a else "Sem responsável"
+            csat_analista.setdefault(quem, [0, 0])
+            csat_analista[quem][0] += c.avaliacao.nota; csat_analista[quem][1] += 1
+            cat = c.categoria.nome if c.categoria else "Sem categoria"
+            csat_categoria.setdefault(cat, [0, 0])
+            csat_categoria[cat][0] += c.avaliacao.nota; csat_categoria[cat][1] += 1
         chave = c.criado_em.strftime("%Y-%m-%d")
         volume_map[chave] = volume_map.get(chave, 0) + 1
 
     tempo_medio = round(total_horas / n_resolvidos, 2) if n_resolvidos else None
     csat_medio = round(csat_soma / csat_n, 2) if csat_n else None
+    sla_cumprimento = round(100 * sla_no_prazo / sla_com_prazo, 1) if sla_com_prazo else None
     volume = [{"data": d, "total": volume_map[d]} for d in sorted(volume_map)]
+    media = lambda d: {k: round(v[0] / v[1], 2) for k, v in d.items() if v[1]}
 
     return {
         "total_chamados": total,
@@ -426,12 +522,15 @@ def dashboard(
         "resolvidos": resolvidos,
         "tempo_medio_resolucao_horas": tempo_medio,
         "csat_medio": csat_medio,
+        "sla_cumprimento": sla_cumprimento,
         "por_status": por_status,
         "por_gravidade": por_gravidade,
         "por_prioridade": por_prioridade,
         "aging": aging,
         "sla": sla_contagem,
         "workload": workload,
+        "csat_por_analista": media(csat_analista),
+        "csat_por_categoria": media(csat_categoria),
         "volume_ultimos_dias": volume,
     }
 

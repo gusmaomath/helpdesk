@@ -10,9 +10,9 @@ from alembic import context
 # Garante que os módulos do backend sejam importáveis ao rodar `alembic`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import config as app_config  # noqa: E402
-from database import Base  # noqa: E402
-import models  # noqa: F401,E402  (registra as tabelas no metadata)
+from app.config import config as app_config  # noqa: E402
+from app.database import Base  # noqa: E402
+from app import models  # noqa: F401,E402  (registra as tabelas no metadata)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

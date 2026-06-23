@@ -14,7 +14,7 @@ from datetime import timedelta
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from models import RegistroRate, agora_utc
+from app.models import RegistroRate, agora_utc
 
 
 def _limpar_antigos(db: Session, tipo: str, janela_seg: int) -> None:

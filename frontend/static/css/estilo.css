@@ -454,6 +454,68 @@ button.anexo-item:hover { border-color: var(--cor-primaria); background: var(--c
     .painel, .kpi { box-shadow: none; break-inside: avoid; }
 }
 
+/* ----------------------- DEFLEXÃO (abrir chamado) ----------------------- */
+.deflexao {
+    background: var(--cor-primaria-suave); border: 1px solid var(--cor-borda);
+    border-radius: var(--raio); padding: 14px 16px; margin-bottom: 18px;
+}
+.deflexao-titulo { font-weight: 700; color: var(--cor-primaria); margin-bottom: 10px; font-size: 14px; }
+.deflexao .kb-item, #kb-lista .kb-item { cursor: pointer; }
+
+/* ----------------------- BASE DE CONHECIMENTO --------------------------- */
+#kb-lista .kb-item:hover { border-color: var(--cor-primaria); }
+.kb-vazio { color: var(--cor-texto-suave); padding: 24px 4px; }
+
+/* ----------------------- AÇÃO EM MASSA ---------------------------------- */
+.barra-massa {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--cor-primaria-clara); border: 1px solid var(--cor-primaria);
+    border-radius: var(--raio); padding: 10px 14px; margin-bottom: 16px;
+}
+.barra-massa select, .barra-massa input {
+    padding: 8px 11px; border: 1px solid var(--cor-borda-forte);
+    border-radius: var(--raio); background: var(--cor-card); color: var(--cor-texto);
+}
+
+/* ----------------------- COMO USAR (ajuda) ------------------------------ */
+.ajuda-doc { max-width: 980px; }
+.ajuda-intro {
+    background: var(--cor-primaria-suave); border: 1px solid var(--cor-borda);
+    border-radius: var(--raio-lg); padding: 18px 20px; margin-bottom: 22px;
+}
+.ajuda-intro strong { color: var(--cor-primaria); }
+.ajuda-sec {
+    background: var(--cor-card); border: 1px solid var(--cor-borda);
+    border-radius: var(--raio-lg); margin-bottom: 14px; overflow: hidden; box-shadow: var(--sombra-sm);
+}
+.ajuda-sec > summary {
+    cursor: pointer; list-style: none; padding: 16px 20px;
+    font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 10px;
+    color: var(--cor-texto);
+}
+.ajuda-sec > summary::-webkit-details-marker { display: none; }
+.ajuda-sec > summary::after { content: '▸'; margin-left: auto; color: var(--cor-texto-suave); transition: transform .15s; }
+.ajuda-sec[open] > summary::after { transform: rotate(90deg); }
+.ajuda-sec > summary:hover { background: var(--cor-card-2); }
+.ajuda-sec .ajuda-corpo { padding: 4px 22px 20px; border-top: 1px solid var(--cor-borda); }
+.ajuda-sec .tag-perfil {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+    background: var(--cor-primaria-clara); color: var(--cor-primaria);
+    padding: 2px 9px; border-radius: var(--raio-full);
+}
+.ajuda-sec.destaque { border-color: var(--cor-primaria); box-shadow: 0 0 0 2px var(--cor-primaria-clara); }
+.ajuda-corpo h4 { font-size: 14.5px; margin: 16px 0 6px; color: var(--cor-primaria); }
+.ajuda-corpo p, .ajuda-corpo li { color: var(--cor-texto); line-height: 1.6; }
+.ajuda-corpo ul, .ajuda-corpo ol { margin: 6px 0 6px 22px; }
+.ajuda-corpo li { margin-bottom: 5px; }
+.ajuda-corpo code {
+    background: var(--cor-card-2); border: 1px solid var(--cor-borda);
+    border-radius: 5px; padding: 1px 6px; font-size: 13px;
+}
+.ajuda-corpo .passo {
+    counter-increment: passo; position: relative; padding-left: 8px; margin-bottom: 6px;
+}
+
 .estrelas { font-size: 24px; color: var(--grav-media); letter-spacing: 3px; }
 
 .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: girar .6s linear infinite; display: inline-block; }

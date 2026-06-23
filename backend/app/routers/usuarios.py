@@ -15,11 +15,11 @@ Regras importantes:
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-import auditoria
-from auth import exigir_admin, gerar_hash_senha, ip_requisicao
-from database import get_db
-from models import NivelAcesso, Papel, Usuario
-from schemas import UsuarioAtualizar, UsuarioCriar, UsuarioResposta
+from app.services import auditoria
+from app.security.auth import exigir_admin, gerar_hash_senha, ip_requisicao
+from app.database import get_db
+from app.models import NivelAcesso, Papel, Usuario
+from app.schemas import UsuarioAtualizar, UsuarioCriar, UsuarioResposta
 
 router = APIRouter(prefix="/api/admin/usuarios", tags=["Usuários"])
 

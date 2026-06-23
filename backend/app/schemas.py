@@ -16,9 +16,9 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from auth import validar_senha_forte
-from config import config
-from models import (
+from app.security.auth import validar_senha_forte
+from app.config import config
+from app.models import (
     Gravidade,
     ImpactoNegocio,
     NivelAcesso,
@@ -509,3 +509,60 @@ class ArtigoResposta(BaseModel):
     conteudo: str
     chamado_origem_id: Optional[int] = None
     criado_em: datetime
+
+
+class ArtigoAtualizar(BaseModel):
+    titulo: Optional[str] = None
+    conteudo: Optional[str] = None
+
+    @field_validator("titulo")
+    @classmethod
+    def vt(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) < 4:
+            raise ValueError("Título muito curto.")
+        return _sanitizar(v)
+
+    @field_validator("conteudo")
+    @classmethod
+    def vc(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) < 10:
+            raise ValueError("Conteúdo muito curto.")
+        return _sanitizar(v)
+
+
+# --------------------------------------------------------------------------- #
+# Deflexão (autoatendimento na abertura) e ações em massa
+# --------------------------------------------------------------------------- #
+class DeflexaoRequest(BaseModel):
+    titulo: str = ""
+    descricao: str = ""
+
+
+class AcaoMassa(BaseModel):
+    """Aplica uma ação a vários chamados de uma vez (gestão)."""
+    ids: list[int]
+    acao: str  # "atribuir" | "status" | "cancelar"
+    valor: Optional[str] = None     # id do responsável (atribuir) ou status
+    motivo: Optional[str] = None    # justificativa (cancelar)
+
+    @field_validator("ids")
+    @classmethod
+    def vids(cls, v):
+        if not v:
+            raise ValueError("Selecione ao menos um chamado.")
+        if len(v) > 200:
+            raise ValueError("Limite de 200 chamados por ação.")
+        return v
+
+    @field_validator("acao")
+    @classmethod
+    def vacao(cls, v):
+        if v not in ("atribuir", "status", "cancelar"):
+            raise ValueError("Ação inválida.")
+        return v

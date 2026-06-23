@@ -10,7 +10,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from models import Auditoria, Usuario
+from app.models import Auditoria, Usuario
 
 
 def registrar(

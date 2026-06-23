@@ -13,7 +13,7 @@ expediente. Suficiente e auditável para o volume de um helpdesk interno.
 """
 from datetime import datetime, timedelta, timezone
 
-from config import config
+from app.config import config
 
 
 def _eh_expediente(dt: datetime) -> bool:

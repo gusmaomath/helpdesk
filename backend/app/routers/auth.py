@@ -9,9 +9,9 @@ GET  /api/auth/me            -> dados do usuário logado
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-import auditoria
-import rate_limit
-from auth import (
+from app.services import auditoria
+from app.security import rate_limit
+from app.security.auth import (
     criar_token_acesso,
     gerar_hash_senha,
     ip_requisicao,
@@ -19,10 +19,10 @@ from auth import (
     validar_senha_forte,
     verificar_senha,
 )
-from config import config
-from database import get_db
-from models import NivelAcesso, Papel, Usuario
-from schemas import (
+from app.config import config
+from app.database import get_db
+from app.models import NivelAcesso, Papel, Usuario
+from app.schemas import (
     AutoCadastro,
     LoginRequest,
     TokenResponse,

@@ -9,13 +9,13 @@ Centraliza a lógica de:
 """
 from typing import Optional
 
-from models import Chamado, Comentario
-from schemas import (
+from app.models import Chamado, Comentario
+from app.schemas import (
     AutorResumo,
     ChamadoDetalhe,
     ChamadoResposta,
 )
-from sla import status_sla
+from app.services.sla import status_sla
 
 
 def _ultimo_publico(chamado: Chamado) -> Optional[str]:
@@ -59,5 +59,5 @@ def serializar_detalhe(
 
 
 def _coment(c: Comentario):
-    from schemas import ComentarioResposta
+    from app.schemas import ComentarioResposta
     return ComentarioResposta.model_validate(c)

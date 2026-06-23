@@ -7,7 +7,7 @@ EXPLICITAMENTE quais transições são permitidas e validamos no backend.
 Regra de ouro: um chamado FECHADO só pode ser REABERTO (não volta direto
 para "em andamento"); um RESOLVIDO pode ser fechado, reaberto, etc.
 """
-from models import StatusChamado
+from app.models import StatusChamado
 
 # De cada status, para quais ele pode ir.
 TRANSICOES_PERMITIDAS: dict[StatusChamado, set[StatusChamado]] = {

@@ -133,6 +133,10 @@ const API = (() => {
 
         // --- Solicitante ---
         categoriasAbertura: () => requisitar('/api/chamados/categorias'),
+        deflexao: (titulo, descricao) =>
+            requisitar('/api/chamados/deflexao', {
+                method: 'POST', body: JSON.stringify({ titulo, descricao }),
+            }),
         meusChamados: () => requisitar('/api/chamados'),
         minhaEquipe: () => requisitar('/api/chamados/equipe'),
         cancelarChamado: (id, motivo) =>
@@ -157,12 +161,25 @@ const API = (() => {
         // --- Equipe / admin ---
         todosChamados: (filtros = {}) => {
             const p = new URLSearchParams();
-            ['status', 'gravidade', 'busca', 'sla', 'atribuido', 'limite', 'offset'].forEach(k => {
+            ['status', 'gravidade', 'categoria', 'busca', 'sla', 'atribuido', 'de', 'ate', 'limite', 'offset'].forEach(k => {
                 if (filtros[k] !== undefined && filtros[k] !== '') p.set(k, filtros[k]);
             });
             const qs = p.toString();
             return requisitar('/api/admin/chamados' + (qs ? `?${qs}` : ''));
         },
+        acaoMassa: (ids, acao, valor, motivo) =>
+            requisitar('/api/admin/chamados/acao-massa', {
+                method: 'POST', body: JSON.stringify({ ids, acao, valor, motivo }),
+            }),
+
+        // --- Base de conhecimento ---
+        kbListar: (busca) => requisitar('/api/kb' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
+        kbDetalhe: (id) => requisitar(`/api/kb/${id}`),
+        kbCriar: (titulo, conteudo) =>
+            requisitar('/api/kb', { method: 'POST', body: JSON.stringify({ titulo, conteudo }) }),
+        kbAtualizar: (id, dados) =>
+            requisitar(`/api/kb/${id}`, { method: 'PUT', body: JSON.stringify(dados) }),
+        kbExcluir: (id) => requisitar(`/api/kb/${id}`, { method: 'DELETE' }),
 
         similares: (id) => requisitar(`/api/admin/chamados/${id}/similares`),
         promoverArtigo: (id, titulo, conteudo) =>

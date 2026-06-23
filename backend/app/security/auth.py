@@ -23,9 +23,9 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from config import config
-from database import get_db
-from models import NivelAcesso, Papel, Usuario
+from app.config import config
+from app.database import get_db
+from app.models import NivelAcesso, Papel, Usuario
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")

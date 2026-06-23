@@ -22,12 +22,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from database import Base, engine
-import models  # noqa: F401  (garante o registro dos modelos antes do create_all)
-from rotas_admin import router as router_admin
-from rotas_auth import router as router_auth
-from rotas_chamados import router as router_chamados
-from rotas_usuarios import router as router_usuarios
+from app.database import Base, engine
+from app import models  # noqa: F401  (garante o registro dos modelos antes do create_all)
+from app.routers.admin import router as router_admin
+from app.routers.auth import router as router_auth
+from app.routers.chamados import router as router_chamados
+from app.routers.kb import router as router_kb
+from app.routers.usuarios import router as router_usuarios
 
 # Logging estruturado básico (em produção, troque por handler JSON).
 logging.basicConfig(
@@ -43,7 +44,7 @@ logger = logging.getLogger("helpdesk")
 Base.metadata.create_all(bind=engine)
 
 # Índices de busca textual (FTS5) — tabelas virtuais + gatilhos de sincronia.
-import busca  # noqa: E402
+from app.services import busca  # noqa: E402
 busca.garantir_fts(engine)
 
 app = FastAPI(
@@ -106,6 +107,7 @@ app.include_router(router_auth)
 app.include_router(router_chamados)
 app.include_router(router_admin)
 app.include_router(router_usuarios)
+app.include_router(router_kb)
 
 
 # --------------------------------------------------------------------------- #
@@ -133,6 +135,6 @@ def health_check():
 @app.on_event("startup")
 def _iniciar_jobs():
     """Sobe o verificador de SLA em background (escalonamento automático)."""
-    import escalonamento
+    from app.services import escalonamento
     escalonamento.iniciar_em_background()
     logger.info("Jobs de background iniciados (escalonamento de SLA).")

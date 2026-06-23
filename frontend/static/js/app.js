@@ -67,12 +67,16 @@
             { id: 'dashboard', ico: '📊', rotulo: 'Painel' },
             { id: 'gestao', ico: '🗂️', rotulo: 'Chamados' },
             { id: 'kanban', ico: '🔲', rotulo: 'Kanban' },
+            { id: 'kb', ico: '📚', rotulo: 'Conhecimento' },
             { id: 'usuarios', ico: '👥', rotulo: 'Usuários' },
             { id: 'auditoria', ico: '📜', rotulo: 'Auditoria' },
+            { id: 'ajuda', ico: '❓', rotulo: 'Como usar' },
           ]
         : [
             { id: 'abrir', ico: '➕', rotulo: 'Abrir chamado' },
             { id: 'meus', ico: '📋', rotulo: 'Meus chamados' },
+            { id: 'kb', ico: '📚', rotulo: 'Conhecimento' },
+            { id: 'ajuda', ico: '❓', rotulo: 'Como usar' },
           ];
     itensMenu.forEach(item => {
         const btn = document.createElement('button');
@@ -95,10 +99,23 @@
         if (pagina === 'equipe') carregarEquipe();
         if (pagina === 'gestao') carregarGestao();
         if (pagina === 'kanban') carregarKanban();
+        if (pagina === 'kb') carregarKb();
         if (pagina === 'dashboard') carregarDashboard();
         if (pagina === 'usuarios') carregarUsuarios();
         if (pagina === 'auditoria') carregarAuditoria();
         if (pagina === 'abrir') carregarCategoriasAbrir();
+        if (pagina === 'ajuda') carregarAjuda();
+    }
+
+    // Aba "Como usar": mostra o perfil logado e destaca a seção dele.
+    function carregarAjuda() {
+        const quem = document.getElementById('ajuda-quem');
+        if (quem) quem.textContent = `${usuario.nome} (${ROTULO_PAPEL[papel] || 'Usuário'})`;
+        const alvoId = ehAdmin ? 'sec-admin'
+            : ((RANK[papel] || 1) >= RANK.analista ? 'sec-lider' : 'sec-solicitante');
+        document.querySelectorAll('.ajuda-sec.destaque').forEach(s => s.classList.remove('destaque'));
+        const alvo = document.getElementById(alvoId);
+        if (alvo) { alvo.classList.add('destaque'); alvo.open = true; }
     }
 
     // ================================================================== //
@@ -178,10 +195,37 @@
 
         // Contador de caracteres da descrição.
         const $desc = document.getElementById('descricao');
+        const $tit = document.getElementById('titulo');
         const $cont = document.getElementById('contador-desc');
         const atualizarContador = () => { if ($cont) $cont.textContent = `${$desc.value.length} / 5000`; };
         $desc.addEventListener('input', atualizarContador);
         atualizarContador();
+
+        // Deflexão: busca soluções enquanto o usuário digita (debounced).
+        const $deflPainel = document.getElementById('deflexao-painel');
+        const $deflRes = document.getElementById('deflexao-resultados');
+        let deflTimer;
+        async function buscarDeflexao() {
+            const titulo = $tit.value.trim(), descricao = $desc.value.trim();
+            if ((titulo + descricao).length < 10) { $deflPainel.style.display = 'none'; return; }
+            try {
+                const r = await API.deflexao(titulo, descricao);
+                const itens = [
+                    ...r.artigos.map(a => `<div class="kb-item" data-tipo="artigo" data-id="${a.id}">
+                        <div class="kb-titulo">📚 ${esc(a.titulo)}</div></div>`),
+                    ...r.similares.map(s => `<div class="kb-item">
+                        🔗 ${esc(s.numero_protocolo || '#' + s.id)} — ${esc(s.titulo)} ${chipStatus(s.status)}</div>`),
+                ];
+                if (!itens.length) { $deflPainel.style.display = 'none'; return; }
+                $deflRes.innerHTML = itens.join('');
+                $deflRes.querySelectorAll('.kb-item[data-tipo="artigo"]').forEach(el =>
+                    el.addEventListener('click', () => abrirArtigo(+el.dataset.id)));
+                $deflPainel.style.display = 'block';
+            } catch (e) { /* silencioso */ }
+        }
+        const agendarDeflexao = () => { clearTimeout(deflTimer); deflTimer = setTimeout(buscarDeflexao, 600); };
+        $tit.addEventListener('input', agendarDeflexao);
+        $desc.addEventListener('input', agendarDeflexao);
 
         // Pré-visualização dos arquivos escolhidos.
         const $fileInput = document.getElementById('abrir-anexos');
@@ -459,32 +503,36 @@
     // ================================================================== //
     const TAM_PAGINA = 25;
     let paginaGestao = 0;
+    const selecionados = new Set();
 
     async function carregarGestao() {
         const corpo = document.getElementById('corpo-gestao');
         const vazio = document.getElementById('vazio-gestao');
-        corpo.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;">Carregando...</td></tr>`;
+        corpo.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;">Carregando...</td></tr>`;
         const filtros = {
             status: document.getElementById('filtro-status').value,
             gravidade: document.getElementById('filtro-gravidade').value,
+            categoria: document.getElementById('filtro-categoria').value,
             sla: document.getElementById('filtro-sla').value,
+            de: document.getElementById('filtro-de').value,
+            ate: document.getElementById('filtro-ate').value,
             busca: document.getElementById('filtro-busca').value.trim(),
             limite: TAM_PAGINA,
             offset: paginaGestao * TAM_PAGINA,
         };
         try {
             const chamados = await API.todosChamados(filtros);
-            // Atualiza controles de paginação.
             document.getElementById('pg-info').textContent = `Página ${paginaGestao + 1}`;
             document.getElementById('pg-anterior').disabled = paginaGestao === 0;
             document.getElementById('pg-proxima').disabled = chamados.length < TAM_PAGINA;
 
             corpo.innerHTML = '';
-            if (!chamados.length) { vazio.style.display = 'block'; return; }
+            if (!chamados.length) { vazio.style.display = 'block'; atualizarBarraMassa(); return; }
             vazio.style.display = 'none';
             chamados.forEach(c => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
+                    <td><input type="checkbox" class="chk-massa" value="${c.id}" ${selecionados.has(c.id) ? 'checked' : ''}></td>
                     <td class="id-chamado">${esc(c.numero_protocolo || '#' + c.id)}</td>
                     <td>${chipPrioridade(c.prioridade)}</td>
                     <td class="titulo-cel">${esc(c.titulo)}</td>
@@ -495,11 +543,23 @@
                     <td>${chipSla(c.sla_status)}</td>
                     <td><button class="btn-mini">Atender</button></td>`;
                 tr.querySelector('button').addEventListener('click', () => abrirModalAdmin(c.id));
+                tr.querySelector('.chk-massa').addEventListener('change', e => {
+                    if (e.target.checked) selecionados.add(c.id); else selecionados.delete(c.id);
+                    atualizarBarraMassa();
+                });
                 corpo.appendChild(tr);
             });
+            atualizarBarraMassa();
         } catch (e) {
-            corpo.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:#b3261e;">${esc(e.message)}</td></tr>`;
+            corpo.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:#b3261e;">${esc(e.message)}</td></tr>`;
         }
+    }
+
+    function atualizarBarraMassa() {
+        const barra = document.getElementById('barra-massa');
+        if (!barra) return;
+        document.getElementById('massa-contador').textContent = `${selecionados.size} selecionado(s)`;
+        barra.style.display = selecionados.size ? 'flex' : 'none';
     }
 
     async function abrirModalAdmin(id) {
@@ -726,15 +786,15 @@
 
     if (ehAdmin) {
         let debounce;
-        const recarregar = () => { paginaGestao = 0; carregarGestao(); };
+        const recarregar = () => { paginaGestao = 0; selecionados.clear(); carregarGestao(); };
         const f = document.getElementById('filtro-busca');
         if (f) {
             f.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(recarregar, 350); });
-            document.getElementById('filtro-status').addEventListener('change', recarregar);
-            document.getElementById('filtro-gravidade').addEventListener('change', recarregar);
-            document.getElementById('filtro-sla').addEventListener('change', recarregar);
+            ['filtro-status', 'filtro-gravidade', 'filtro-categoria', 'filtro-sla', 'filtro-de', 'filtro-ate']
+                .forEach(id => document.getElementById(id).addEventListener('change', recarregar));
             document.getElementById('btn-limpar-filtros').addEventListener('click', () => {
-                ['filtro-busca', 'filtro-status', 'filtro-gravidade', 'filtro-sla'].forEach(id => document.getElementById(id).value = '');
+                ['filtro-busca', 'filtro-status', 'filtro-gravidade', 'filtro-categoria', 'filtro-sla', 'filtro-de', 'filtro-ate']
+                    .forEach(id => document.getElementById(id).value = '');
                 recarregar();
             });
             document.getElementById('pg-anterior').addEventListener('click', () => {
@@ -751,6 +811,59 @@
                     a.href = url; a.download = 'chamados.csv';
                     document.body.appendChild(a); a.click(); a.remove();
                     setTimeout(() => URL.revokeObjectURL(url), 5000);
+                } catch (e) { alert(e.message); }
+            });
+            // Popular o filtro de categorias.
+            garantirCategorias().then(cats => {
+                const sel = document.getElementById('filtro-categoria');
+                sel.innerHTML = '<option value="">Todas as categorias</option>'
+                    + cats.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('');
+            });
+            // Selecionar todos (visíveis).
+            document.getElementById('massa-todos').addEventListener('change', e => {
+                document.querySelectorAll('.chk-massa').forEach(chk => {
+                    chk.checked = e.target.checked;
+                    if (e.target.checked) selecionados.add(+chk.value); else selecionados.delete(+chk.value);
+                });
+                atualizarBarraMassa();
+            });
+            // Ação em massa: ajusta os controles conforme a ação.
+            const mAcao = document.getElementById('massa-acao');
+            const mValor = document.getElementById('massa-valor');
+            const mMotivo = document.getElementById('massa-motivo');
+            mAcao.addEventListener('change', async () => {
+                mValor.style.display = 'none'; mMotivo.style.display = 'none';
+                if (mAcao.value === 'atribuir') {
+                    const eq = await garantirUsuarios();
+                    mValor.innerHTML = '<option value="">— sem responsável —</option>'
+                        + eq.filter(u => (RANK[u.papel] || 1) >= RANK.analista)
+                            .map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
+                    mValor.style.display = '';
+                } else if (mAcao.value === 'status') {
+                    mValor.innerHTML = ['em_andamento', 'aguardando_usuario', 'resolvido', 'fechado']
+                        .map(s => `<option value="${s}">${ROTULO_STATUS[s]}</option>`).join('');
+                    mValor.style.display = '';
+                } else if (mAcao.value === 'cancelar') {
+                    mMotivo.style.display = '';
+                }
+            });
+            document.getElementById('massa-aplicar').addEventListener('click', async () => {
+                const acao = mAcao.value;
+                if (!acao) return alert('Escolha uma ação.');
+                if (!selecionados.size) return alert('Nenhum chamado selecionado.');
+                const ids = [...selecionados];
+                let valor = null, motivo = null;
+                if (acao === 'atribuir' || acao === 'status') valor = mValor.value;
+                if (acao === 'cancelar') {
+                    motivo = (mMotivo.value || '').trim();
+                    if (motivo.length < 5) return alert('Informe um motivo (mín. 5 caracteres).');
+                    if (!confirm(`Cancelar ${ids.length} chamado(s)?`)) return;
+                }
+                try {
+                    const r = await API.acaoMassa(ids, acao, valor, motivo);
+                    alert(`Aplicado a ${r.aplicados} chamado(s).` + (r.pulados ? ` ${r.pulados} pulado(s) por transição inválida.` : ''));
+                    selecionados.clear(); mAcao.value = ''; mValor.style.display = 'none'; mMotivo.style.display = 'none';
+                    carregarGestao();
                 } catch (e) { alert(e.message); }
             });
         }
@@ -888,7 +1001,7 @@
             <div class="campo"><label>Nome</label><input id="u-nome" value="${edicao ? esc(u.nome) : ''}"></div>
             <div class="linha-campos">
                 <div class="campo"><label>Matrícula</label><input id="u-matricula" value="${edicao ? esc(u.matricula) : ''}" ${edicao ? 'disabled' : ''}></div>
-                <div class="campo"><label>${edicao ? 'Nova senha (opcional)' : 'Senha'}</label><input id="u-senha" type="password" placeholder="${edicao ? 'Deixe em branco p/ manter' : ''}"></div>
+                <div class="campo"><label>${edicao ? 'Redefinir senha (opcional)' : 'Senha'}</label><input id="u-senha" type="password" autocomplete="new-password" placeholder="${edicao ? 'Deixe em branco para manter a atual' : ''}">${edicao ? '<div class="ajuda">Se preencher, o usuário troca no próximo acesso.</div>' : ''}</div>
             </div>
             <div class="linha-campos">
                 <div class="campo"><label>Papel</label><select id="u-papel">${optsPapel}</select></div>
@@ -1006,6 +1119,88 @@
     }
 
     // ================================================================== //
+    // BASE DE CONHECIMENTO (todos leem; admin gerencia)
+    // ================================================================== //
+    async function carregarKb() {
+        const lista = document.getElementById('kb-lista');
+        const btnNovo = document.getElementById('btn-novo-artigo');
+        if (btnNovo) btnNovo.style.display = ehAdmin ? '' : 'none';
+        lista.innerHTML = '<div class="kb-vazio">Carregando...</div>';
+        try {
+            const termo = document.getElementById('kb-busca').value.trim();
+            const artigos = await API.kbListar(termo);
+            if (!artigos.length) { lista.innerHTML = '<div class="kb-vazio">Nenhum artigo encontrado.</div>'; return; }
+            lista.innerHTML = artigos.map(a => `
+                <div class="kb-item" data-id="${a.id}">
+                    <div class="kb-titulo">📚 ${esc(a.titulo)}</div>
+                    <div style="color:var(--cor-texto-suave);font-size:13px;">${esc((a.conteudo || '').slice(0, 140))}${(a.conteudo || '').length > 140 ? '…' : ''}</div>
+                </div>`).join('');
+            lista.querySelectorAll('.kb-item').forEach(el =>
+                el.addEventListener('click', () => abrirArtigo(+el.dataset.id)));
+        } catch (e) {
+            lista.innerHTML = `<div class="kb-vazio" style="color:#b3261e;">${esc(e.message)}</div>`;
+        }
+    }
+
+    async function abrirArtigo(id) {
+        let a;
+        try { a = await API.kbDetalhe(id); } catch (e) { return alert(e.message); }
+        document.getElementById('modal-titulo').textContent = a.titulo;
+        document.getElementById('modal-corpo').innerHTML = `
+            <div class="detalhe-descricao">${esc(a.conteudo)}</div>
+            ${a.chamado_origem_id ? `<div class="ajuda" style="margin-top:10px;">Origem: chamado #${a.chamado_origem_id}</div>` : ''}
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML = ehAdmin
+            ? `<button class="btn btn-perigo btn-mini" id="art-excluir">Excluir</button>
+               <span class="espaco-flex"></span>
+               <button class="btn btn-fantasma" id="art-fechar">Fechar</button>
+               <button class="btn btn-primario" id="art-editar">Editar</button>`
+            : `<button class="btn btn-secundario" id="art-fechar">Fechar</button>`;
+        document.getElementById('art-fechar').addEventListener('click', fecharModal);
+        if (ehAdmin) {
+            document.getElementById('art-editar').addEventListener('click', () => abrirEditorArtigo(a));
+            document.getElementById('art-excluir').addEventListener('click', async () => {
+                if (!confirm('Excluir este artigo?')) return;
+                try { await API.kbExcluir(id); fecharModal(); carregarKb(); } catch (e) { alertaModal(e.message); }
+            });
+        }
+        mostrarModal();
+    }
+
+    function abrirEditorArtigo(artigo) {
+        const ed = !!artigo;
+        document.getElementById('modal-titulo').textContent = ed ? 'Editar artigo' : 'Novo artigo';
+        document.getElementById('modal-corpo').innerHTML = `
+            <div class="campo"><label>Título</label><input id="art-titulo" value="${ed ? esc(artigo.titulo) : ''}"></div>
+            <div class="campo"><label>Conteúdo</label><textarea id="art-conteudo" style="min-height:160px;">${ed ? esc(artigo.conteudo) : ''}</textarea></div>
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML = `
+            <button class="btn btn-fantasma" id="art-cancelar">Cancelar</button>
+            <button class="btn btn-primario" id="art-salvar">Salvar</button>`;
+        document.getElementById('art-cancelar').addEventListener('click', fecharModal);
+        document.getElementById('art-salvar').addEventListener('click', async () => {
+            const titulo = document.getElementById('art-titulo').value.trim();
+            const conteudo = document.getElementById('art-conteudo').value.trim();
+            if (titulo.length < 4 || conteudo.length < 10) return alertaModal('Título (4+) e conteúdo (10+) obrigatórios.');
+            try {
+                if (ed) await API.kbAtualizar(artigo.id, { titulo, conteudo });
+                else await API.kbCriar(titulo, conteudo);
+                fecharModal(); carregarKb();
+            } catch (e) { alertaModal(e.message); }
+        });
+        mostrarModal();
+    }
+
+    {
+        const b = document.getElementById('kb-buscar');
+        if (b) b.addEventListener('click', carregarKb);
+        const s = document.getElementById('kb-busca');
+        if (s) s.addEventListener('keydown', e => { if (e.key === 'Enter') carregarKb(); });
+        const n = document.getElementById('btn-novo-artigo');
+        if (n) n.addEventListener('click', () => abrirEditorArtigo(null));
+    }
+
+    // ================================================================== //
     // DASHBOARD
     // ================================================================== //
     const graficos = {};
@@ -1091,6 +1286,8 @@
         document.getElementById('kpi-sla').textContent = `${d.sla.vencido} / ${d.sla.em_risco}`;
         document.getElementById('kpi-csat').textContent =
             d.csat_medio !== null ? `${d.csat_medio} ★` : 'Sem dados';
+        document.getElementById('kpi-sla-cumprido').textContent =
+            d.sla_cumprimento !== null && d.sla_cumprimento !== undefined ? `${d.sla_cumprimento}%` : 'Sem dados';
 
         const gl = ['Baixa', 'Média', 'Alta', 'Crítica'];
         desenharDoughnut('gravidade', 'g-gravidade', gl, gl.map(l => d.por_gravidade[l] || 0), gl.map(l => COR.gravidade[l]));
@@ -1105,7 +1302,38 @@
             [d.sla.ok, d.sla.em_risco, d.sla.vencido], [COR.sla.ok, COR.sla.em_risco, COR.sla.vencido]);
         const wl = d.workload || {};
         desenharBarra('workload', 'g-workload', Object.keys(wl), Object.values(wl), '#9a3b48');
+
+        const ca = d.csat_por_analista || {};
+        desenharBarraCsat('csatA', 'g-csat-analista', Object.keys(ca), Object.values(ca));
+        const cc = d.csat_por_categoria || {};
+        desenharBarraCsat('csatC', 'g-csat-categoria', Object.keys(cc), Object.values(cc));
+
         desenharVolume(d.volume_ultimos_dias);
+    }
+
+    // CSAT: barra horizontal com escala fixa 0–5 (média de estrelas).
+    function desenharBarraCsat(chave, canvasId, labels, dados) {
+        destruir(chave);
+        if (!labels.length) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            return;
+        }
+        const opts = opcoesBarra(true);
+        opts.scales.x.max = 5;
+        // Tooltip específico de CSAT: "4.5 ★ (média)" em vez de "N chamados".
+        opts.plugins.tooltip.callbacks = {
+            label: (ctx) => {
+                const v = (ctx.parsed && typeof ctx.parsed === 'object') ? ctx.parsed.x : ctx.parsed;
+                return `${v} ★ (média)`;
+            },
+        };
+        graficos[chave] = new Chart(document.getElementById(canvasId), {
+            type: 'bar',
+            data: { labels, datasets: [{ data: dados, backgroundColor: '#cf9a1a',
+                borderRadius: 8, maxBarThickness: 22, borderSkipped: false }] },
+            options: opts,
+        });
     }
 
     function desenharDoughnut(chave, canvasId, labels, dados, cores) {

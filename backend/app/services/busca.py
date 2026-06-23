@@ -54,13 +54,14 @@ def garantir_fts(engine: Engine) -> None:
                    END;""",
             ):
                 conn.exec_driver_sql(trig)
-            # Backfill se a FTS estiver vazia.
-            vazio = conn.exec_driver_sql("SELECT count(*) FROM chamados_fts").scalar()
-            if not vazio:
-                conn.exec_driver_sql(
-                    "INSERT INTO chamados_fts(rowid, titulo, descricao) "
-                    "SELECT id, titulo, descricao FROM chamados"
-                )
+            # Reindexa a partir da tabela de conteúdo. Em FTS5 de conteúdo
+            # externo, o jeito correto é o comando 'rebuild' (INSERT...SELECT
+            # manual desalinha o índice). Sempre reconstruir no boot garante
+            # consistência mesmo após `seed.py --reset` (que não dropa as
+            # tabelas virtuais). Custo desprezível neste volume.
+            conn.exec_driver_sql(
+                "INSERT INTO chamados_fts(chamados_fts) VALUES('rebuild')"
+            )
 
             # --- Artigos (KB) ---
             conn.exec_driver_sql(
@@ -84,6 +85,10 @@ def garantir_fts(engine: Engine) -> None:
                    END;""",
             ):
                 conn.exec_driver_sql(trig)
+            # Reindexa artigos (ex.: criados pelo seed antes da FTS existir).
+            conn.exec_driver_sql(
+                "INSERT INTO artigos_fts(artigos_fts) VALUES('rebuild')"
+            )
         _FTS_OK = True
     except Exception as exc:  # pragma: no cover - resiliência
         print(f"[FTS] indisponível, busca textual desativada: {exc}")
@@ -108,13 +113,17 @@ def _consulta(texto: str) -> str:
     return " OR ".join(unicos)
 
 
-def similares(db: Session, chamado, limite: int = 5) -> list[dict]:
-    """Chamados parecidos com `chamado` (por título + descrição), exceto ele."""
+def _buscar_similares(db, texto, exclude_id, limite, apenas_resolvidos):
+    """Núcleo da busca de chamados similares por texto livre."""
     if not _FTS_OK:
         return []
-    q = _consulta(f"{chamado.titulo} {chamado.descricao}")
+    q = _consulta(texto)
     if not q:
         return []
+    # O Enum é gravado pelo NOME em maiúsculas ('RESOLVIDO'); o filtro raw usa isso.
+    filtro_status = (
+        "AND c.status IN ('RESOLVIDO', 'FECHADO') " if apenas_resolvidos else ""
+    )
     try:
         linhas = db.execute(
             text(
@@ -122,17 +131,40 @@ def similares(db: Session, chamado, limite: int = 5) -> list[dict]:
                 "FROM chamados_fts JOIN chamados c ON c.id = chamados_fts.rowid "
                 "WHERE chamados_fts MATCH :q AND c.id != :self "
                 "AND c.excluido_em IS NULL "
+                f"{filtro_status}"
                 "ORDER BY rank LIMIT :lim"
             ),
-            {"q": q, "self": chamado.id, "lim": limite},
+            {"q": q, "self": exclude_id or -1, "lim": limite},
         ).all()
+        # status vem como nome ('RESOLVIDO'); .lower() dá o value ('resolvido').
         return [
             {"id": r[0], "numero_protocolo": r[1], "titulo": r[2],
-             "status": r[3].value if hasattr(r[3], "value") else r[3]}
+             "status": str(r[3]).lower()}
             for r in linhas
         ]
     except Exception:
         return []
+
+
+def similares(db: Session, chamado, limite: int = 5) -> list[dict]:
+    """Chamados parecidos com `chamado` (para o atendimento), exceto ele."""
+    return _buscar_similares(
+        db, f"{chamado.titulo} {chamado.descricao}",
+        exclude_id=chamado.id, limite=limite, apenas_resolvidos=False,
+    )
+
+
+def similares_por_texto(db: Session, titulo: str, descricao: str,
+                        limite: int = 4) -> list[dict]:
+    """
+    Para DEFLEXÃO: dado o texto que o usuário está digitando, sugere chamados
+    JÁ RESOLVIDOS/FECHADOS parecidos (provável fonte de solução). Devolve só
+    título/protocolo/status — sem expor descrição/internos de terceiros.
+    """
+    return _buscar_similares(
+        db, f"{titulo} {descricao}", exclude_id=None,
+        limite=limite, apenas_resolvidos=True,
+    )
 
 
 def buscar_kb(db: Session, termo: str, limite: int = 10) -> list[dict]:

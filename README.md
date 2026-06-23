@@ -19,30 +19,35 @@ comercial, trilha de auditoria e interface com tema claro/escuro.
 ```
 helpdesk/
 ├── backend/
-│   ├── main.py             # Monta a app, registra rotas, logging, serve o front
-│   ├── config.py           # Configurações: segredos, SLA, rate limit, uploads
-│   ├── database.py         # Engine/sessão SQLAlchemy + PRAGMAs do SQLite (WAL)
-│   ├── models.py           # Tabelas e enums (Usuario, Chamado, Comentario, ...)
-│   ├── schemas.py          # Validação e sanitização (Pydantic)
-│   ├── auth.py             # Hash, JWT, papéis, escopo hierárquico, brute force
-│   ├── ia.py               # >>> MÓDULO DE IA (mock plug and play) + PII mask <<<
-│   ├── sla.py              # Cálculo de SLA em horário comercial + aging
-│   ├── escalonamento.py    # Job em background: escala chamados com SLA vencido
-│   ├── estado.py           # Máquina de estados do chamado (transições válidas)
-│   ├── busca.py            # Busca textual FTS5 (similares + base de conhecimento)
-│   ├── rate_limit.py       # Rate-limit / anti-brute-force PERSISTENTE (tabela)
-│   ├── notificacoes.py     # Camada de notificação plugável (log/Teams/Slack)
-│   ├── auditoria.py        # Helper da trilha de auditoria
-│   ├── protocolo.py        # Geração de protocolo (contador atômico, sem corrida)
-│   ├── serializar.py       # ORM -> schemas de resposta (com campos derivados)
-│   ├── rotas_auth.py       # /api/auth/*      (login, auto-cadastro, troca de senha)
-│   ├── rotas_chamados.py   # /api/chamados/*  (abrir, equipe, cancelar, reabrir, anexos)
-│   ├── rotas_admin.py      # /api/admin/*     (gestão, dashboard, KB, export, reset)
-│   ├── rotas_usuarios.py   # /api/admin/usuarios/* (gestão de usuários/hierarquia)
-│   ├── seed.py             # Cria taxonomia, usuários e chamados de exemplo
-│   ├── alembic/            # Migrações de schema (batch mode p/ SQLite)
+│   ├── main.py             # Entrypoint (uvicorn main:app): monta a app e os routers
+│   ├── seed.py             # CLI de dados de exemplo (python seed.py [--reset])
+│   ├── requirements.txt
 │   ├── alembic.ini
-│   └── requirements.txt
+│   ├── alembic/            # Migrações de schema (batch mode p/ SQLite)
+│   └── app/                # >>> Pacote da aplicação <<<
+│       ├── config.py       # Configurações: segredos, SLA, rate limit, uploads
+│       ├── database.py     # Engine/sessão SQLAlchemy + PRAGMAs do SQLite (WAL)
+│       ├── models.py       # Tabelas e enums (Usuario, Chamado, Comentario, ...)
+│       ├── schemas.py      # Validação e sanitização (Pydantic)
+│       ├── security/       # Autenticação e defesa
+│       │   ├── auth.py     # Hash, JWT, papéis, escopo hierárquico, política de senha
+│       │   └── rate_limit.py  # Rate-limit / anti-brute-force PERSISTENTE (tabela)
+│       ├── services/       # Regras de negócio / domínio
+│       │   ├── ia.py       # >>> MÓDULO DE IA (mock plug and play) + PII mask <<<
+│       │   ├── sla.py      # SLA em horário comercial + aging
+│       │   ├── escalonamento.py # Job em background: escala SLA vencido
+│       │   ├── estado.py   # Máquina de estados do chamado
+│       │   ├── busca.py    # Busca textual FTS5 (similares + KB + deflexão)
+│       │   ├── notificacoes.py  # Camada de notificação plugável (log/Teams/Slack)
+│       │   ├── auditoria.py     # Helper da trilha de auditoria
+│       │   ├── protocolo.py     # Protocolo (contador atômico, sem corrida)
+│       │   └── serializar.py    # ORM -> schemas de resposta (campos derivados)
+│       └── routers/        # Rotas da API (um arquivo por área)
+│           ├── auth.py     # /api/auth/*      (login, auto-cadastro, troca de senha)
+│           ├── chamados.py # /api/chamados/*  (abrir, deflexão, equipe, cancelar, anexos)
+│           ├── admin.py    # /api/admin/*     (gestão, dashboard, export, ação em massa)
+│           ├── usuarios.py # /api/admin/usuarios/* (gestão de usuários/hierarquia)
+│           └── kb.py       # /api/kb/*        (base de conhecimento)
 └── frontend/
     ├── templates/
     │   ├── index.html      # Login + solicitação de cadastro
@@ -128,10 +133,16 @@ imediatamente** (via `token_version` no JWT).
 - **Abrir chamado** com campos ricos (categoria/subcategoria, sistema, módulo/tela,
   impacto, urgência, unidade, contato), **descrição mínima** (gate de qualidade) e
   **anexos** (prints, PDF, logs) — triagem de IA automática na criação.
+- **Autoatendimento / deflexão**: ao digitar título e descrição, o sistema sugere
+  **artigos da KB e chamados já resolvidos parecidos** ("Isso já não resolve?")
+  antes de abrir — reduz volume de chamados.
 - **Meus chamados**: os próprios **+ os de toda a equipe abaixo**, com **filtro por
   solicitante**; timeline de comentários (sem ver notas internas), **baixar anexos**,
   **comentar** e **avaliar (CSAT)** os próprios, **cancelar** (o próprio ou o de um
   subordinado, com justificativa) e **reabrir** um chamado encerrado.
+- **Base de conhecimento**: página própria para **buscar artigos** e se autoatender.
+- **Como usar**: manual integrado, com a seção do **seu perfil destacada** e o guia
+  completo de todos os perfis (conceitos, status, SLA, hierarquia e FAQ).
 - **Minha equipe**: as pessoas abaixo na hierarquia, com contadores; clicar leva
   aos chamados daquela pessoa.
 - **Auto-cadastro** pela tela de login: a conta fica **pendente** até a aprovação
@@ -141,18 +152,21 @@ imediatamente** (via `token_version` no JWT).
 
 **Administrador**
 - **Painel**: KPIs (abertos, resolvidos, críticos, tempo médio, SLA vencido/risco,
-  CSAT) e gráficos de gravidade, status, prioridade, **aging**, **SLA** e
-  **workload por responsável** — com botão **Imprimir / PDF**.
+  **CSAT** e **% de SLA cumprido**) e gráficos de gravidade, status, prioridade,
+  **aging**, **SLA**, **workload** e **CSAT por analista/categoria** — com botão
+  **Imprimir / PDF**.
 - **Gestão de chamados** (atende TODOS): fila **paginada**, filtrável por status,
-  gravidade, **SLA** e busca, com **exportação CSV**; modal em abas com triagem da
-  IA, **correção da classificação**, atribuição, transição de status (máquina de
-  estados), resposta pública, **nota interna**, anexos, **encerramento** (causa
-  raiz, solução, prevenção) e **Conhecimento** (chamados similares, busca na KB e
-  "promover a artigo").
+  gravidade, **categoria**, **período (datas)**, **SLA** e busca, com **exportação
+  CSV** e **ações em massa** (atribuir/mudar status/cancelar vários de uma vez);
+  modal em abas com triagem da IA, **correção da classificação**, atribuição,
+  transição de status, resposta pública, **nota interna**, anexos, **encerramento**
+  e **Conhecimento** (chamados similares, busca na KB e "promover a artigo").
 - **Kanban operacional**: arraste os cartões entre colunas para mudar o status
   (validado pela máquina de estados); clique abre o chamado.
+- **Base de conhecimento**: criar, **editar** e excluir artigos.
 - **Gestão de usuários**: criar/editar, ativar/desativar, **aprovar** cadastros
-  pendentes, definir papel e supervisor.
+  pendentes, definir papel/supervisor e **redefinir a senha de qualquer usuário**
+  (que passa a ser provisória → troca no próximo acesso).
 - **Trilha de auditoria**: quem fez o quê, quando e de onde.
 - **Reset do banco**: botão protegido por re-confirmação de matrícula + senha.
 
@@ -179,8 +193,20 @@ imediatamente** (via `token_version` no JWT).
 ### Trilha de auditoria (admin)
 ![Trilha de auditoria](docs/telas/auditoria.png)
 
-### Abrir chamado (usuário)
+### Abrir chamado + deflexão (usuário)
 ![Abrir chamado](docs/telas/abrir-chamado.png)
+
+### Autoatendimento / deflexão (sugestões antes de abrir)
+![Deflexão](docs/telas/deflexao.png)
+
+### Base de conhecimento
+![Base de conhecimento](docs/telas/base-conhecimento.png)
+
+### Como usar (manual integrado)
+![Como usar](docs/telas/como-usar.png)
+
+### Ação em massa (gestão)
+![Ação em massa](docs/telas/acao-em-massa.png)
 
 ### Meus chamados — próprios + equipe (usuário)
 ![Meus chamados](docs/telas/meus-chamados.png)
@@ -193,7 +219,7 @@ imediatamente** (via `token_version` no JWT).
 
 ## A integração de IA (Plug and Play)
 
-Toda a lógica de análise está isolada em **`backend/ia.py`**. Hoje roda um
+Toda a lógica de análise está isolada em **`app/services/ia.py`**. Hoje roda um
 **mock** (`AnalisadorMock`) por heurísticas de texto. Contrato de saída estável:
 
 ```json
@@ -215,7 +241,7 @@ for um serviço externo.
 ### Para plugar a IA real
 
 1. Crie uma classe que herde de `AnalisadorIA` e implemente `analisar()`.
-2. Troque **uma única linha** em `ia.py`:
+2. Troque **uma única linha** em `app/services/ia.py`:
 
 ```python
 # Antes:
@@ -232,42 +258,45 @@ de que requer **triagem humana** (em vez de fingir uma classificação).
 > **Análises avançadas (futuras):** já existem **pontos de conexão comentados**
 > para a IA fazer análises extras — sugestão de resposta (copiloto), classificação
 > de sentimento, detecção de duplicados, resumo para handoff e previsão de risco
-> de SLA. Veja os blocos comentados em `ia.py` e `escalonamento.py`.
+> de SLA. Veja os blocos comentados em `app/services/ia.py` e `app/services/escalonamento.py`.
 
 ## Concorrência e robustez (SQLite)
 
 - **WAL mode** + `busy_timeout`: leituras não bloqueiam escritas; aberturas
-  concorrentes esperam o lock em vez de falhar (ver `database.py`).
-- **Protocolo sem corrida**: `protocolo.py` usa uma linha-contador incrementada
+  concorrentes esperam o lock em vez de falhar (ver `app/database.py`).
+- **Protocolo sem corrida**: `app/services/protocolo.py` usa uma linha-contador incrementada
   por `UPDATE` atômico — testado com 40 aberturas simultâneas, 0 duplicados.
 - **Optimistic locking**: `versao_linha` no chamado evita sobrescrita simultânea
   (responde **409** se o registro mudou desde que foi carregado).
-- **Rate limit / anti-brute-force PERSISTENTE** (`rate_limit.py`): a contagem de
+- **Rate limit / anti-brute-force PERSISTENTE** (`app/security/rate_limit.py`): a contagem de
   tentativas de login e de aberturas de chamado fica em **tabela** (não em memória
   de processo), então vale mesmo com `uvicorn --workers N`.
-- **Notificações assíncronas** desacopladas via `notificacoes.py` (canal de log
+- **Notificações assíncronas** desacopladas via `app/services/notificacoes.py` (canal de log
   hoje, pronto para Teams/Slack por webhook).
 
 ## SLA (horário comercial) e escalonamento automático
 
 O prazo de SLA é calculado em **horas úteis** (jornada e dias úteis
-configuráveis em `config.py`), não em horas corridas. O relógio **pausa** quando
+configuráveis em `app/config.py`), não em horas corridas. O relógio **pausa** quando
 o chamado está em "aguardando usuário". Cada chamado expõe `sla_status`: `ok`,
 `em_risco` ou `vencido`.
 
-Um **job em background** (`escalonamento.py`) varre periodicamente os chamados em
+Um **job em background** (`app/services/escalonamento.py`) varre periodicamente os chamados em
 aberto com SLA **vencido** e ainda não escalados, e: marca-os, **notifica o
 superior** do responsável (ou a gestão) e registra na auditoria. Intervalo em
 `HELPDESK_ESCALONAMENTO_INTERVALO` (0 desativa).
 
 ## Busca textual (FTS5) e base de conhecimento
 
-`busca.py` mantém índices **FTS5** nativos do SQLite (sincronizados por gatilhos),
+`app/services/busca.py` mantém índices **FTS5** nativos do SQLite (sincronizados por gatilhos),
 sem dependências externas nem embeddings:
+- **Deflexão na abertura**: enquanto o usuário digita, sugere artigos da KB e
+  chamados já resolvidos parecidos — para resolver antes de abrir.
 - **Chamados similares**: na aba *Conhecimento* do atendimento, sugere chamados
   parecidos (apoio à deduplicação e ao reuso de solução).
-- **Base de conhecimento**: o admin pode **promover um chamado a artigo** e
-  **buscar** artigos por relevância (bm25).
+- **Base de conhecimento**: página dedicada (leitura para todos); o admin pode
+  **promover um chamado a artigo**, **criar/editar/excluir** e todos **buscam**
+  por relevância (bm25).
 
 ## Segurança (considerações para ambiente bancário)
 

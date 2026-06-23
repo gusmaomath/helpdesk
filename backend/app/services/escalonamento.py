@@ -15,11 +15,11 @@ acoplar ao event loop. Intervalo em `config.ESCALONAMENTO_INTERVALO_SEGUNDOS`
 import threading
 import time
 
-import auditoria
-import notificacoes
-from config import config
-from database import SessionLocal
-from models import Chamado, StatusChamado, Usuario, agora_utc
+from app.services import auditoria
+from app.services import notificacoes
+from app.config import config
+from app.database import SessionLocal
+from app.models import Chamado, StatusChamado, Usuario, agora_utc
 
 # Estados "ativos" cujo SLA vencido deve escalar (aguardando_usuario está pausado).
 _ESTADOS_ESCALAVEIS = [

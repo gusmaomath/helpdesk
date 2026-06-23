@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from config import config
+from app.config import config
 
 # check_same_thread=False é necessário para o SQLite funcionar com FastAPI,
 # que pode acessar a conexão por threads diferentes.

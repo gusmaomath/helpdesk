@@ -25,19 +25,20 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-import auditoria
-import rate_limit
-from auth import (
+from app.services import auditoria
+from app.services import busca
+from app.security import rate_limit
+from app.security.auth import (
     ids_descendentes,
     ids_visiveis_para,
     ip_requisicao,
     obter_usuario_atual,
 )
-from config import config
-from database import get_db
-from estado import ESTADOS_ENCERRADOS
-from ia import analisar_chamado
-from models import (
+from app.config import config
+from app.database import get_db
+from app.services.estado import ESTADOS_ENCERRADOS
+from app.services.ia import analisar_chamado
+from app.models import (
     Anexo,
     Avaliacao,
     Categoria,
@@ -50,9 +51,9 @@ from models import (
     Usuario,
     agora_utc,
 )
-from notificacoes import notificar
-from protocolo import gerar_protocolo
-from schemas import (
+from app.services.notificacoes import notificar
+from app.services.protocolo import gerar_protocolo
+from app.schemas import (
     AvaliacaoCriar,
     AvaliacaoResposta,
     CancelarChamado,
@@ -62,9 +63,10 @@ from schemas import (
     ChamadoResposta,
     ComentarioCriar,
     ComentarioResposta,
+    DeflexaoRequest,
 )
-from serializar import serializar_chamado, serializar_detalhe
-from sla import calcular_prazo
+from app.services.serializar import serializar_chamado, serializar_detalhe
+from app.services.sla import calcular_prazo
 
 router = APIRouter(prefix="/api/chamados", tags=["Chamados"])
 
@@ -166,6 +168,26 @@ def listar_categorias_para_abertura(
         .order_by(Categoria.nome)
         .all()
     )
+
+
+@router.post("/deflexao")
+def deflexao(
+    dados: DeflexaoRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Autoatendimento: a partir do que o usuário está digitando, sugere chamados
+    JÁ RESOLVIDOS parecidos e artigos da base de conhecimento — para tentar
+    resolver antes de abrir um novo chamado (deflexão).
+    """
+    texto = f"{dados.titulo} {dados.descricao}".strip()
+    if len(texto) < 8:
+        return {"similares": [], "artigos": []}
+    return {
+        "similares": busca.similares_por_texto(db, dados.titulo, dados.descricao, limite=4),
+        "artigos": busca.buscar_kb(db, texto, limite=4),
+    }
 
 
 @router.get("/equipe")
