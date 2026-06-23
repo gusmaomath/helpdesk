@@ -325,17 +325,32 @@ def executar_seed(reset: bool = False) -> None:
             NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=lider,
             setor="Agência Central", email="joao@empresa.com",
         )
-        # Maria é usuária da Ágora Investimentos (interface verde-petróleo).
+
+        # --- Equipe Ágora Investimentos (interface verde-petróleo) ---
+        # Sub-árvore própria, para testar todos os papéis/visões na cor Ágora.
+        bianca = criar_usuario(
+            db, "Bianca Líder (Ágora)", "bianca.agora", "Senha@1234",
+            NivelAcesso.USUARIO, Papel.LIDER, supervisor=coord,
+            setor="Ágora — Mesa", email="bianca@agorainvest.com.br",
+            organizacao=Organizacao.AGORA,
+        )
         maria = criar_usuario(
             db, "Maria Souza", "maria.souza", "Senha@1234",
-            NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=lider,
-            setor="Filial Sul", email="maria@agorainvest.com.br",
+            NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=bianca,
+            setor="Ágora — Filial Sul", email="maria@agorainvest.com.br",
+            organizacao=Organizacao.AGORA,
+        )
+        pedro = criar_usuario(
+            db, "Pedro Ágora", "pedro.agora", "Senha@1234",
+            NivelAcesso.USUARIO, Papel.COLABORADOR, supervisor=bianca,
+            setor="Ágora — Atendimento", email="pedro@agorainvest.com.br",
             organizacao=Organizacao.AGORA,
         )
 
         if not db.query(Chamado).first():
             print("Criando chamados de exemplo (com datas espalhadas)...")
-            solicitantes = [joao, maria]
+            # Bradesco BBI (joao) + Ágora (maria, pedro): há chamados nas duas marcas.
+            solicitantes = [joao, maria, pedro]
             estados = [
                 StatusChamado.ABERTO, StatusChamado.EM_ANDAMENTO,
                 StatusChamado.AGUARDANDO_USUARIO, StatusChamado.RESOLVIDO,
@@ -366,15 +381,17 @@ def executar_seed(reset: bool = False) -> None:
         criar_templates(db, db_cats)
 
         print("\nSeed concluído com sucesso!")
-        print("-" * 56)
-        print("Credenciais de teste:")
-        print("  ADMIN       -> admin        | Admin@1234")
-        print("  COORDENADOR -> carla.coord  | Senha@1234")
-        print("  LÍDER       -> lucas.lider  | Senha@1234")
-        print("  ANALISTA    -> ana.analista | Senha@1234")
-        print("  USUÁRIO     -> joao.silva   | Senha@1234")
-        print("  USUÁRIO     -> maria.souza  | Senha@1234")
-        print("-" * 56)
+        print("-" * 64)
+        print("Credenciais de teste:                            | Organização")
+        print("  ADMIN       -> admin        | Admin@1234        | Bradesco BBI")
+        print("  COORDENADOR -> carla.coord  | Senha@1234        | Bradesco BBI")
+        print("  LÍDER       -> lucas.lider  | Senha@1234        | Bradesco BBI")
+        print("  ANALISTA    -> ana.analista | Senha@1234        | Bradesco BBI")
+        print("  USUÁRIO     -> joao.silva   | Senha@1234        | Bradesco BBI")
+        print("  LÍDER       -> bianca.agora | Senha@1234        | Ágora (verde)")
+        print("  USUÁRIO     -> maria.souza  | Senha@1234        | Ágora (verde)")
+        print("  USUÁRIO     -> pedro.agora  | Senha@1234        | Ágora (verde)")
+        print("-" * 64)
     finally:
         db.close()
 

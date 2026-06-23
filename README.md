@@ -99,7 +99,12 @@ Acesse: **http://localhost:8000** · Documentação da API: **http://localhost:8
 | Líder         | `lucas.lider`  | `Senha@1234` | Bradesco BBI   |
 | Analista      | `ana.analista` | `Senha@1234` | Bradesco BBI   |
 | Colaborador   | `joao.silva`   | `Senha@1234` | Bradesco BBI   |
+| Líder         | `bianca.agora` | `Senha@1234` | **Ágora** (verde) |
 | Colaborador   | `maria.souza`  | `Senha@1234` | **Ágora** (verde) |
+| Colaborador   | `pedro.agora`  | `Senha@1234` | **Ágora** (verde) |
+
+> A **Ágora** tem uma sub-equipe própria (Bianca → Maria, Pedro) com chamados,
+> para testar todos os papéis/visões no tema verde — inclusive **Minha equipe**.
 
 > Em produção, integre a autenticação com o Active Directory / LDAP do banco
 > e force troca de senha no primeiro acesso.
