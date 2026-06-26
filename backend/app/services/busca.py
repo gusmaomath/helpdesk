@@ -9,11 +9,14 @@ Sem dependências externas e sem embeddings: o FTS5 dá ranking por relevância
 (bm25) suficiente para um helpdesk interno. Se o SQLite tiver sido compilado
 sem FTS5 (raríssimo), as funções degradam para lista vazia em vez de quebrar.
 """
+import logging
 import re
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 _FTS_OK = False
 
@@ -91,7 +94,7 @@ def garantir_fts(engine: Engine) -> None:
             )
         _FTS_OK = True
     except Exception as exc:  # pragma: no cover - resiliência
-        print(f"[FTS] indisponível, busca textual desativada: {exc}")
+        logger.warning("FTS indisponível, busca textual desativada: %s", exc)
         _FTS_OK = False
 
 

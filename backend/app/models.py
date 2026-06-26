@@ -20,6 +20,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -309,6 +310,10 @@ class Chamado(Base):
     # Se foi mesclado em outro chamado, guarda o id do principal (rastreabilidade).
     mesclado_em_id = Column(Integer, ForeignKey("chamados.id"), nullable=True)
 
+    # Respostas dos campos personalizados do template (snapshot pronto p/ exibir):
+    # lista de {"rotulo": str, "valor": str}. Vazio quando aberto sem template.
+    campos_personalizados = Column(JSON, nullable=True)
+
     comentarios = relationship(
         "Comentario", back_populates="chamado", cascade="all, delete-orphan"
     )
@@ -496,6 +501,16 @@ class Template(Base):
     sistema_afetado = Column(String(80), nullable=True)
     impacto_negocio = Column(Enum(ImpactoNegocio), nullable=True)
     ativo = Column(Boolean, default=True, nullable=False)
+
+    # Campos personalizados (chamado modular). Lista de definições:
+    # {"chave","rotulo","tipo","obrigatorio","opcoes":[str],"padrao":str}
+    # tipos: texto | texto_longo | numero | data | selecao | multipla | booleano
+    campos_personalizados = Column(JSON, nullable=True)
+
+    # Quais campos PADRÃO da abertura este modelo exibe (formulário montável).
+    # dict {categoria,subcategoria,sistema,modulo,impacto,urgencia,unidade,
+    # contato,anexos: bool}. Ausente/None = mostra todos (comportamento antigo).
+    campos_padrao = Column(JSON, nullable=True)
 
 
 # --------------------------------------------------------------------------- #

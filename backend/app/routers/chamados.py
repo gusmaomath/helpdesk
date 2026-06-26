@@ -17,6 +17,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
@@ -44,6 +45,7 @@ from app.models import (
     Categoria,
     Chamado,
     Comentario,
+    Feriado,
     Gravidade,
     NivelAcesso,
     QualidadeDescritiva,
@@ -73,6 +75,48 @@ from app.services.sla import calcular_prazo, carregar_parametros_sla
 router = APIRouter(prefix="/api/chamados", tags=["Chamados"])
 
 TIPO_ABERTURA = "abertura_chamado"
+
+
+def _resolver_campos_personalizados(db: Session, template_id, valores: dict | None):
+    """
+    Valida as respostas dos campos personalizados contra a definição do modelo
+    e devolve um snapshot pronto p/ exibir: [{"rotulo": str, "valor": str}].
+    Sem modelo (ou sem campos), devolve None — abertura "normal".
+    """
+    if not template_id:
+        return None
+    template = db.get(Template, template_id)
+    if template is None or not template.campos_personalizados:
+        return None
+
+    valores = valores or {}
+    snapshot = []
+    for campo in template.campos_personalizados:
+        chave = campo.get("chave")
+        rotulo = campo.get("rotulo", chave)
+        tipo = campo.get("tipo", "texto")
+        obrigatorio = bool(campo.get("obrigatorio"))
+        opcoes = campo.get("opcoes") or []
+        bruto = valores.get(chave)
+
+        # Normaliza para texto de exibição conforme o tipo.
+        if tipo == "multipla":
+            escolhidos = [str(x) for x in (bruto or []) if str(x) in opcoes]
+            texto = ", ".join(escolhidos)
+        elif tipo == "booleano":
+            marcado = bruto in (True, "true", "on", "1", 1, "Sim")
+            texto = "Sim" if marcado else "Não"
+        else:
+            texto = "" if bruto is None else str(bruto).strip()
+            if tipo == "selecao" and texto and texto not in opcoes:
+                raise HTTPException(422, f"Valor inválido para '{rotulo}'.")
+
+        if obrigatorio and not texto:
+            raise HTTPException(422, f"O campo '{rotulo}' é obrigatório.")
+        if texto:
+            snapshot.append({"rotulo": str(rotulo)[:80], "valor": texto[:500]})
+
+    return snapshot or None
 
 
 @router.post("", response_model=ChamadoDetalhe, status_code=status.HTTP_201_CREATED)
@@ -118,6 +162,9 @@ def abrir_chamado(
         indisponibilidade_inicio=dados.indisponibilidade_inicio,
         indisponibilidade_fim=dados.indisponibilidade_fim,
         numero_protocolo=gerar_protocolo(db),
+        campos_personalizados=_resolver_campos_personalizados(
+            db, dados.template_id, dados.campos_personalizados
+        ),
     )
 
     # Triagem de IA (mock por enquanto; PII mascarada internamente).
@@ -292,6 +339,65 @@ def listar_meus_chamados(
         .all()
     )
     return [serializar_chamado(c) for c in chamados]
+
+
+@router.get("/calendario")
+def calendario(
+    ano: int = Query(..., ge=2000, le=2100),
+    mes: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Eventos do mês para TODOS: prazos de SLA (previsão de entrega) dos chamados
+    que o usuário enxerga + feriados. Admin vê todos os chamados; os demais, os
+    próprios + os da cadeia abaixo. Declarada antes de `/{chamado_id}`.
+    """
+    import calendar as _cal
+
+    ultimo_dia = _cal.monthrange(ano, mes)[1]
+    agora = agora_utc()
+    encerrados = {StatusChamado.RESOLVIDO, StatusChamado.FECHADO, StatusChamado.CANCELADO}
+
+    feris = (
+        db.query(Feriado)
+        .filter(Feriado.data >= f"{ano}-{mes:02d}-01", Feriado.data <= f"{ano}-{mes:02d}-{ultimo_dia:02d}")
+        .all()
+    )
+
+    # Filtra por ano/mês em Python: comparar datetime com timezone no SQLite via
+    # SQL é traiçoeiro (compara como string e o sufixo de fuso quebra a ordem).
+    q = db.query(Chamado).filter(
+        Chamado.excluido_em.is_(None),
+        Chamado.sla_prazo.isnot(None),
+    )
+    if usuario.nivel_acesso != NivelAcesso.ADMINISTRADOR:
+        ids = ids_visiveis_para(db, usuario)
+        q = q.filter(Chamado.autor_id.in_(ids))
+
+    chamados = []
+    for c in q.all():
+        prazo = c.sla_prazo
+        if prazo.year != ano or prazo.month != mes:
+            continue
+        encerrado = c.status in encerrados
+        # Compara em UTC, tolerando prazo "naive" (assume UTC) ou "aware".
+        prazo_cmp = prazo if prazo.tzinfo else prazo.replace(tzinfo=agora.tzinfo)
+        chamados.append({
+            "id": c.id,
+            "numero_protocolo": c.numero_protocolo,
+            "titulo": c.titulo,
+            "status": c.status.value,
+            "data": prazo.date().isoformat(),
+            "vencido": (not encerrado) and prazo_cmp < agora,
+            "encerrado": encerrado,
+        })
+    chamados.sort(key=lambda x: x["data"])
+
+    return {
+        "feriados": [{"data": f.data, "descricao": f.descricao} for f in feris],
+        "chamados": chamados,
+    }
 
 
 def _chamado_visivel_ou_404(db: Session, chamado_id: int, usuario: Usuario) -> Chamado:

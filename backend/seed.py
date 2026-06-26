@@ -133,64 +133,13 @@ def criar_config_sla(db):
     db.commit()
 
 
-def _domingo_de_pascoa(ano: int) -> date:
-    """Data da Páscoa (algoritmo de Meeus/Jones/Butcher) — base dos móveis."""
-    a = ano % 19
-    b, c = divmod(ano, 100)
-    d, e = divmod(b, 4)
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i, k = divmod(c, 4)
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    mes, dia = divmod(h + l - 7 * m + 114, 31)
-    return date(ano, mes, dia + 1)
-
-
-def feriados_b3(ano: int) -> dict:
-    """
-    Calendário oficial de feriados da B3 para o ano (sem pregão), incluindo os
-    móveis derivados da Páscoa. Consciência Negra entrou como nacional em 2024.
-    """
-    pascoa = _domingo_de_pascoa(ano)
-    feriados = {
-        f"{ano}-01-01": "Confraternização Universal",
-        f"{ano}-04-21": "Tiradentes",
-        f"{ano}-05-01": "Dia do Trabalho",
-        f"{ano}-09-07": "Independência do Brasil",
-        f"{ano}-10-12": "Nossa Senhora Aparecida",
-        f"{ano}-11-02": "Finados",
-        f"{ano}-11-15": "Proclamação da República",
-        f"{ano}-12-25": "Natal",
-        # Véspera de Natal e de Ano-Novo: B3 não opera.
-        f"{ano}-12-24": "Véspera de Natal (B3 sem pregão)",
-        f"{ano}-12-31": "Véspera de Ano-Novo (B3 sem pregão)",
-        # Móveis (dependentes da Páscoa):
-        (pascoa - timedelta(days=48)).isoformat(): "Carnaval (segunda)",
-        (pascoa - timedelta(days=47)).isoformat(): "Carnaval (terça)",
-        (pascoa - timedelta(days=2)).isoformat(): "Sexta-feira Santa",
-        (pascoa + timedelta(days=60)).isoformat(): "Corpus Christi",
-    }
-    if ano >= 2024:
-        feriados[f"{ano}-11-20"] = "Consciência Negra"
-    return feriados
-
-
 def criar_feriados_b3(db):
     """Pré-carrega o calendário B3 do ano atual e do próximo (idempotente)."""
+    from app.services.feriados import sincronizar
     ano = agora_utc().year
-    existentes = {f.data for f in db.query(Feriado).all()}
-    novos = 0
-    for a in (ano, ano + 1):
-        for data, descricao in feriados_b3(a).items():
-            if data not in existentes:
-                db.add(Feriado(data=data, descricao=descricao))
-                existentes.add(data)
-                novos += 1
+    novos, fonte = sincronizar(db, (ano, ano + 1))
     if novos:
-        print(f"Carregando {novos} feriados da B3 ({ano}/{ano + 1})...")
-        db.commit()
+        print(f"Carregando {novos} feriados da B3 ({ano}/{ano + 1}) via {fonte}...")
 
 
 def criar_templates(db, db_cats):
@@ -200,18 +149,36 @@ def criar_templates(db, db_cats):
     modelos = [
         ("Solicitar acesso a sistema", "Solicitação de acesso",
          "Sistema: \nPerfil/permissão necessária: \nJustificativa/aprovador: ",
-         "Acesso", ImpactoNegocio.MEDIO),
+         "Acesso", ImpactoNegocio.MEDIO,
+         # Chamado modular: campos personalizados deste modelo.
+         [
+             {"chave": "sistema", "rotulo": "Sistema", "tipo": "selecao",
+              "obrigatorio": True, "opcoes": ["ERP", "CRM", "E-mail", "VPN", "Portal RH"]},
+             {"chave": "perfil", "rotulo": "Perfil de acesso", "tipo": "selecao",
+              "obrigatorio": True, "opcoes": ["Consulta", "Operador", "Aprovador", "Administrador"]},
+             {"chave": "data_inicio", "rotulo": "Necessário a partir de", "tipo": "data",
+              "obrigatorio": False, "opcoes": []},
+             {"chave": "aprovador", "rotulo": "Gestor que aprova", "tipo": "texto",
+              "obrigatorio": True, "opcoes": []},
+         ]),
         ("Trocar periférico (mouse/teclado)", "Troca de periférico",
          "Equipamento com defeito: \nNº de patrimônio: \nLocal/ramal: ",
-         "Hardware", ImpactoNegocio.BAIXO),
+         "Hardware", ImpactoNegocio.BAIXO,
+         [
+             {"chave": "equipamento", "rotulo": "Equipamento", "tipo": "selecao",
+              "obrigatorio": True, "opcoes": ["Mouse", "Teclado", "Monitor", "Headset", "Webcam"]},
+             {"chave": "patrimonio", "rotulo": "Nº de patrimônio", "tipo": "texto",
+              "obrigatorio": False, "opcoes": []},
+         ]),
         ("Reportar erro em sistema", "Erro no sistema",
          "Sistema/tela: \nMensagem de erro exata: \nPassos para reproduzir: ",
-         "Sistema", ImpactoNegocio.ALTO),
+         "Sistema", ImpactoNegocio.ALTO, []),
     ]
-    for nome, titulo, descricao, cat_nome, impacto in modelos:
+    for nome, titulo, descricao, cat_nome, impacto, campos in modelos:
         db.add(Template(
             nome=nome, titulo=titulo, descricao=descricao,
             categoria_id=db_cats.get(cat_nome), impacto_negocio=impacto,
+            campos_personalizados=campos or None,
         ))
     db.commit()
 

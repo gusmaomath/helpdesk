@@ -7,6 +7,7 @@ Em produção, defina SECRET_KEY via variável de ambiente / cofre de segredos.
 """
 import os
 import secrets
+from pathlib import Path
 
 
 def _env_int(nome: str, padrao: int) -> int:
@@ -14,6 +15,15 @@ def _env_int(nome: str, padrao: int) -> int:
         return int(os.getenv(nome, str(padrao)))
     except ValueError:
         return padrao
+
+
+# Raiz do projeto (…/helpdesk), independente do diretório de execução.
+# config.py está em  <raiz>/backend/app/config.py  → sobe 3 níveis.
+RAIZ_PROJETO = Path(__file__).resolve().parents[2]
+# Pasta única para todos os dados persistentes do projeto.
+DB_DIR = RAIZ_PROJETO / "db"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+(DB_DIR / "uploads").mkdir(parents=True, exist_ok=True)
 
 
 class Config:
@@ -29,9 +39,11 @@ class Config:
     # Tempo de expiração do token de acesso (em minutos)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = _env_int("HELPDESK_TOKEN_EXPIRE_MINUTES", 480)
 
-    # Caminho do banco SQLite
+    # Caminho do banco SQLite — SEMPRE em <raiz>/db/helpdesk.db (caminho
+    # absoluto), para não depender de onde o comando é executado.
     DATABASE_URL: str = os.getenv(
-        "HELPDESK_DATABASE_URL", "sqlite:///./helpdesk.db"
+        "HELPDESK_DATABASE_URL",
+        f"sqlite:///{(DB_DIR / 'helpdesk.db').as_posix()}",
     )
 
     # Política de senha
@@ -55,8 +67,8 @@ class Config:
     MAX_RESPOSTA_LENGTH: int = 5000
     MAX_COMENTARIO_LENGTH: int = 5000
 
-    # --- Uploads / evidências ---
-    UPLOAD_DIR: str = os.getenv("HELPDESK_UPLOAD_DIR", "./uploads")
+    # --- Uploads / evidências --- (junto do banco, em <raiz>/db/uploads)
+    UPLOAD_DIR: str = os.getenv("HELPDESK_UPLOAD_DIR", str(DB_DIR / "uploads"))
     MAX_UPLOAD_BYTES: int = _env_int("HELPDESK_MAX_UPLOAD_BYTES", 10 * 1024 * 1024)  # 10MB
     EXTENSOES_PERMITIDAS = {
         ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".txt", ".log", ".csv",

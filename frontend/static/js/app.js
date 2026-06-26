@@ -24,6 +24,8 @@
     let gestaoMinhaFila = false;
     // Estado: termo da busca global aplicado em "Meus chamados" (não-admin).
     let buscaMeusTexto = '';
+    // Estado: modelo (template) escolhido na abertura — guia os campos modulares.
+    let templateAtivo = null;
 
     // --- Tema (toggle no topo) ---
     if (window.Tema) window.Tema.conectarBotao(document.getElementById('btn-tema'));
@@ -90,6 +92,7 @@
         ? [
             { id: 'dashboard', ico: '📊', rotulo: 'Painel' },
             { id: 'chamados', ico: '🗂️', rotulo: 'Chamados', grupo: true },
+            { id: 'calendario', ico: '📅', rotulo: 'Calendário' },
             { id: 'kb', ico: '📚', rotulo: 'Conhecimento' },
             { id: 'administracao', ico: '⚙️', rotulo: 'Administração', grupo: true },
             { id: 'ajuda', ico: '❓', rotulo: 'Como usar' },
@@ -97,6 +100,7 @@
         : [
             { id: 'abrir', ico: '➕', rotulo: 'Abrir chamado' },
             { id: 'meus', ico: '📋', rotulo: 'Meus chamados' },
+            { id: 'calendario', ico: '📅', rotulo: 'Calendário' },
             { id: 'kb', ico: '📚', rotulo: 'Conhecimento' },
             { id: 'ajuda', ico: '❓', rotulo: 'Como usar' },
           ];
@@ -157,6 +161,7 @@
         if (pagina === 'modelos') carregarModelos();
         if (pagina === 'config') carregarConfig();
         if (pagina === 'categorias') carregarCategoriasAdmin();
+        if (pagina === 'calendario') carregarCalendarioGeral();
     }
     window.navegar = navegar;
 
@@ -230,6 +235,86 @@
     // SOLICITANTE
     // ================================================================== //
     let templatesCache = [];
+    // Renderiza os campos personalizados de um modelo (chamado modular).
+    function renderCamposTemplate(t) {
+        const wrap = document.getElementById('campos-template');
+        if (!wrap) return;
+        const campos = (t && t.campos_personalizados) || [];
+        if (!campos.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+        let html = '<div class="campos-template-titulo">📋 Detalhes do modelo</div>';
+        campos.forEach(c => {
+            const id = 'cp-' + c.chave;
+            const req = c.obrigatorio ? ' <span class="cp-obrig">*</span>' : '';
+            const dt = `data-chave="${esc(c.chave)}" data-tipo="${esc(c.tipo)}"`;
+            const padrao = c.padrao || '';
+            const padroes = padrao.split(',').map(s => s.trim());  // p/ múltipla
+            let campo;
+            if (c.tipo === 'booleano') {
+                const on = ['sim', 'true', '1', 'on'].includes(padrao.toLowerCase());
+                campo = `<label class="cp-check"><input type="checkbox" id="${id}" ${dt} ${on ? 'checked' : ''}> ${esc(c.rotulo)}${req}</label>`;
+            } else if (c.tipo === 'multipla') {
+                const ops = (c.opcoes || []).map(o =>
+                    `<label class="cp-check"><input type="checkbox" value="${esc(o)}" ${padroes.includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('');
+                campo = `<label>${esc(c.rotulo)}${req}</label><div class="cp-grupo" ${dt}>${ops}</div>`;
+            } else if (c.tipo === 'selecao') {
+                const ops = (c.opcoes || []).map(o => `<option value="${esc(o)}" ${padrao === o ? 'selected' : ''}>${esc(o)}</option>`).join('');
+                campo = `<label for="${id}">${esc(c.rotulo)}${req}</label><select id="${id}" ${dt}><option value="">Selecione...</option>${ops}</select>`;
+            } else if (c.tipo === 'texto_longo') {
+                campo = `<label for="${id}">${esc(c.rotulo)}${req}</label><textarea id="${id}" ${dt}>${esc(padrao)}</textarea>`;
+            } else {
+                const html5 = c.tipo === 'numero' ? 'number' : c.tipo === 'data' ? 'date' : 'text';
+                campo = `<label for="${id}">${esc(c.rotulo)}${req}</label><input type="${html5}" id="${id}" ${dt} value="${esc(padrao)}">`;
+            }
+            html += `<div class="campo">${campo}</div>`;
+        });
+        wrap.innerHTML = html;
+        wrap.style.display = '';
+    }
+
+    // Mostra/oculta os campos PADRÃO da abertura conforme o modelo escolhido.
+    // Sem modelo (t nulo) ou modelo sem config → mostra todos.
+    function aplicarCamposPadrao(t) {
+        Object.entries(MAPA_CAMPOS_PADRAO).forEach(([k, id]) => {
+            const el = document.getElementById(id);
+            const wrap = el && el.closest('.campo');
+            if (!wrap) return;
+            const oculto = !!(t && t.campos_padrao && t.campos_padrao[k] === false);
+            wrap.style.display = oculto ? 'none' : '';
+        });
+    }
+
+    // Coleta as respostas dos campos personalizados num mapa chave→valor.
+    function coletarCamposTemplate() {
+        const wrap = document.getElementById('campos-template');
+        const out = {};
+        if (!wrap || wrap.style.display === 'none') return out;
+        wrap.querySelectorAll('[data-chave]').forEach(el => {
+            const chave = el.dataset.chave, tipo = el.dataset.tipo;
+            if (tipo === 'multipla') {
+                out[chave] = Array.from(el.querySelectorAll('input:checked')).map(i => i.value);
+            } else if (tipo === 'booleano') {
+                out[chave] = el.checked;
+            } else {
+                out[chave] = el.value;
+            }
+        });
+        return out;
+    }
+
+    // Valida os obrigatórios localmente (mensagem amigável antes do servidor).
+    function validarCamposTemplate(valores) {
+        if (!templateAtivo) return null;
+        for (const c of (templateAtivo.campos_personalizados || [])) {
+            if (!c.obrigatorio) continue;
+            const v = valores[c.chave];
+            const vazio = c.tipo === 'multipla' ? !(v && v.length)
+                : c.tipo === 'booleano' ? false
+                : !String(v == null ? '' : v).trim();
+            if (vazio) return `Preencha o campo obrigatório "${c.rotulo}".`;
+        }
+        return null;
+    }
+
     async function carregarCategoriasAbrir() {
         if (ehAdmin) return;
         const cats = await garantirCategorias();
@@ -250,12 +335,19 @@
                 + templatesCache.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('');
             selT.onchange = () => {
                 const t = templatesCache.find(x => x.id == selT.value);
+                templateAtivo = t || null;        // controla os campos modulares
+                renderCamposTemplate(t);          // "do zero" (t indefinido) → limpa
+                aplicarCamposPadrao(t);           // mostra/oculta os campos padrão
                 if (!t) return;
                 document.getElementById('titulo').value = t.titulo || '';
                 document.getElementById('descricao').value = t.descricao || '';
                 if (t.sistema_afetado) document.getElementById('abrir-sistema').value = t.sistema_afetado;
                 if (t.impacto_negocio) document.getElementById('abrir-impacto').value = t.impacto_negocio;
-                if (t.categoria_id) { selCat.value = t.categoria_id; preencherSelectSubcategorias(selSub, cats, t.categoria_id); }
+                if (t.categoria_id) {
+                    selCat.value = t.categoria_id;
+                    preencherSelectSubcategorias(selSub, cats, t.categoria_id);
+                    if (t.subcategoria_id) selSub.value = t.subcategoria_id;
+                }
                 document.getElementById('descricao').dispatchEvent(new Event('input'));
             };
         }
@@ -338,6 +430,15 @@
             const uni = val('abrir-unidade'); if (uni) dados.unidade_setor = uni;
             const con = val('abrir-contato'); if (con) dados.contato_retorno = con;
 
+            // Chamado modular: anexa o modelo e as respostas dos campos personalizados.
+            if (templateAtivo) {
+                const valores = coletarCamposTemplate();
+                const faltou = validarCamposTemplate(valores);
+                if (faltou) return alertaAbrir(faltou, 'erro');
+                dados.template_id = templateAtivo.id;
+                dados.campos_personalizados = valores;
+            }
+
             const arquivos = Array.from($fileInput.files || []);
 
             $btnAbrir.disabled = true;
@@ -352,6 +453,10 @@
                 ['titulo', 'descricao', 'abrir-sistema', 'abrir-modulo', 'abrir-unidade', 'abrir-contato']
                     .forEach(id => document.getElementById(id).value = '');
                 $fileInput.value = ''; $listaAnexos.innerHTML = ''; atualizarContador();
+                // Reseta o modelo e os campos modulares.
+                const selTpl = document.getElementById('abrir-template');
+                if (selTpl) selTpl.value = '';
+                templateAtivo = null; renderCamposTemplate(null); aplicarCamposPadrao(null);
                 const aviso = falhasAnexo
                     ? ` (${falhasAnexo} anexo(s) não enviados — verifique tipo/tamanho)`
                     : '';
@@ -466,6 +571,17 @@
 
     function ehImagem(nome) { return /\.(png|jpe?g|gif|webp|bmp)$/i.test(nome || ''); }
 
+    // Mostra as respostas dos campos personalizados (chamado modular) no detalhe.
+    function renderCamposDet(c) {
+        const campos = c.campos_personalizados || [];
+        if (!campos.length) return '';
+        const linhas = campos.map(f =>
+            `<div class="cp-det-item"><span class="cp-det-rot">${esc(f.rotulo)}</span>
+             <span class="cp-det-val">${esc(f.valor)}</span></div>`).join('');
+        return `<div class="detalhe-linha"><div class="rot">Campos do modelo</div>
+            <div class="cp-det">${linhas}</div></div>`;
+    }
+
     function renderAnexos(c) {
         if (!c.anexos || !c.anexos.length) return '';
         const imgs = c.anexos.filter(a => ehImagem(a.nome_original));
@@ -557,6 +673,7 @@
                 <div><div class="rot">Aberto em</div><div class="val">${formatarData(c.criado_em)}</div></div>
                 <div><div class="rot">SLA</div>${chipSla(c.sla_status)}</div>
             </div>
+            ${renderCamposDet(c)}
             ${renderAnexos(c)}
             <div class="detalhe-linha"><div class="rot">Histórico</div>${renderTimeline(c.comentarios)}</div>
             ${meu && !encerrado ? `
@@ -750,6 +867,7 @@
                     <div><div class="rot">SLA</div>${chipSla(c.sla_status)} <span style="font-size:12px;color:var(--cor-texto-suave);">${c.sla_prazo ? 'até ' + formatarData(c.sla_prazo) : ''}</span></div>
                 </div>
                 <div class="detalhe-linha"><div class="rot">Descrição</div><div class="detalhe-descricao">${esc(c.descricao)}</div></div>
+                ${renderCamposDet(c)}
                 ${renderAnexos(c)}
 
                 <div class="campo"><label for="m-status">Status</label><select id="m-status">${optsStatus}</select></div>
@@ -1166,6 +1284,7 @@
                     <td style="display:flex;gap:6px;">
                         ${!u.ativo ? '<button class="btn-mini btn-aprovar">✓ Aprovar</button>' : ''}
                         <button class="btn-mini btn-editar">Editar</button>
+                        ${u.id !== usuario.id ? '<button class="btn-mini btn-excluir-user" style="background:var(--grav-critica-bg);color:var(--grav-critica);">Excluir</button>' : ''}
                     </td>`;
                 tr.querySelector('.btn-editar').addEventListener('click', () => abrirModalUsuarioAdmin(u));
                 const ap = tr.querySelector('.btn-aprovar');
@@ -1174,11 +1293,43 @@
                     try { await API.atualizarUsuario(u.id, { ativo: true }); carregarUsuarios(); }
                     catch (e) { alert(e.message); }
                 });
+                const ex = tr.querySelector('.btn-excluir-user');
+                if (ex) ex.addEventListener('click', async () => {
+                    if (!confirm(`Excluir o usuário "${u.nome}"?\n\nSe ele tiver histórico (chamados, comentários, auditoria), será anonimizado e desativado em vez de apagado — para preservar a trilha.`)) return;
+                    try {
+                        const r = await API.excluirUsuario(u.id);
+                        alert(r.detail || 'Usuário removido.');
+                        carregarUsuarios();
+                    } catch (e) { alert(e.message); }
+                });
                 corpo.appendChild(tr);
             });
         } catch (e) {
             corpo.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:#b3261e;">${esc(e.message)}</td></tr>`;
         }
+    }
+
+    // Árvore hierárquica do usuário: a cadeia de chefias acima + os subordinados
+    // diretos. Montada a partir do usuariosCache (cada um tem supervisor_id).
+    function renderArvoreHierarquia(u) {
+        const byId = {}; usuariosCache.forEach(x => byId[x.id] = x);
+        const acima = []; const visto = new Set();
+        let cur = u.supervisor_id ? byId[u.supervisor_id] : null;
+        while (cur && !visto.has(cur.id)) { acima.unshift(cur); visto.add(cur.id); cur = cur.supervisor_id ? byId[cur.supervisor_id] : null; }
+        const filhos = usuariosCache.filter(x => x.supervisor_id === u.id);
+        const no = (x, cls, nivel) => `
+            <div class="arvore-no ${cls}" style="margin-left:${nivel * 22}px">
+                <span class="arvore-papel">${esc(ROTULO_PAPEL[x.papel] || x.papel)}</span>
+                <strong>${esc(x.nome)}</strong>
+                ${x.unidade_setor ? `<span class="arvore-setor">${esc(x.unidade_setor)}</span>` : ''}
+            </div>`;
+        let html = acima.map((x, i) => no(x, '', i)).join('');
+        html += no(u, 'arvore-atual', acima.length);
+        html += filhos.length
+            ? filhos.map(f => no(f, 'arvore-filho', acima.length + 1)).join('')
+            : `<div class="arvore-vazio" style="margin-left:${(acima.length + 1) * 22}px">Sem subordinados diretos.</div>`;
+        return `<div class="detalhe-linha" style="margin-top:18px;">
+            <div class="rot">Árvore hierárquica</div><div class="arvore">${html}</div></div>`;
     }
 
     function abrirModalUsuarioAdmin(u) {
@@ -1212,6 +1363,7 @@
                     <option value="0" ${!u.ativo ? 'selected' : ''}>Inativo</option></select></div>` : '<div></div>'}
             </div>
             <div class="ajuda">Trocar papel, desativar ou redefinir senha encerra as sessões abertas do usuário imediatamente.</div>
+            ${edicao ? renderArvoreHierarquia(u) : ''}
             <div id="modal-alerta" class="alerta" style="margin-top:12px;"></div>`;
 
         document.getElementById('modal-rodape').innerHTML = `
@@ -1250,6 +1402,46 @@
         if (b) b.addEventListener('click', async () => { await garantirUsuarios(); abrirModalUsuarioAdmin(null); });
         const br = document.getElementById('btn-reset-db');
         if (br) br.addEventListener('click', abrirModalReset);
+        const bl = document.getElementById('btn-limpar-dados');
+        if (bl) bl.addEventListener('click', abrirModalLimpar);
+    }
+
+    function abrirModalLimpar() {
+        document.getElementById('modal-titulo').textContent = '🧹 Limpar dados de movimento';
+        document.getElementById('modal-corpo').innerHTML = `
+            <div class="alerta erro visivel" style="display:block;">
+                Apaga <strong>chamados, comentários, anexos, avaliações, notificações,
+                auditoria e etiquetas</strong>. É <strong>irreversível</strong>.
+            </div>
+            <p class="ajuda" style="margin-bottom:16px;">
+                <strong>Preserva</strong> todos os usuários e a configuração (categorias,
+                SLA, feriados, modelos e base de conhecimento). <strong>Não</strong> roda o seed.
+                Para confirmar, digite <strong>sua</strong> matrícula e senha de administrador.
+            </p>
+            <div class="campo"><label>Matrícula</label><input id="lmp-matricula" autocomplete="off"></div>
+            <div class="campo"><label>Senha</label><input id="lmp-senha" type="password" autocomplete="off"></div>
+            <div id="modal-alerta" class="alerta"></div>`;
+        document.getElementById('modal-rodape').innerHTML = `
+            <button class="btn btn-fantasma" id="lmp-cancelar">Cancelar</button>
+            <button class="btn btn-perigo" id="lmp-confirmar">Limpar dados</button>`;
+        document.getElementById('lmp-cancelar').addEventListener('click', fecharModal);
+        document.getElementById('lmp-confirmar').addEventListener('click', async () => {
+            const mat = document.getElementById('lmp-matricula').value.trim();
+            const sen = document.getElementById('lmp-senha').value;
+            if (!mat || !sen) return alertaModal('Informe matrícula e senha.');
+            const btn = document.getElementById('lmp-confirmar');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Limpando...';
+            try {
+                const r = await API.limparDados(mat, sen);
+                fecharModal();
+                alert(r.detail || 'Dados de movimento apagados. Usuários e configuração preservados.');
+                if (typeof carregarUsuarios === 'function') carregarUsuarios();
+            } catch (e) {
+                alertaModal(e.message);
+                btn.disabled = false; btn.textContent = 'Limpar dados';
+            }
+        });
+        mostrarModal();
     }
 
     function abrirModalReset() {
@@ -1580,8 +1772,11 @@
         graficos.volume = new Chart(document.getElementById('g-volume'), {
             type: 'line',
             data: { labels, datasets: [{ label: 'Chamados', data: (volume || []).map(v => v.total),
-                borderColor: t.primaria, backgroundColor: grad, borderWidth: 2.5,
-                fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 5, pointBackgroundColor: t.primaria }] },
+                borderColor: t.primaria, backgroundColor: grad, borderWidth: 2,
+                fill: true,
+                // 'monotone' impede a curva de "estourar" abaixo/acima dos pontos.
+                cubicInterpolationMode: 'monotone', tension: 0,
+                pointRadius: 0, pointHoverRadius: 5, pointBackgroundColor: t.primaria }] },
             options: opcoesBarra(),
         });
     }
@@ -1842,6 +2037,19 @@
         });
     })();
 
+    // Campos PADRÃO da abertura que um modelo pode ligar/desligar (formulário montável).
+    const CAMPOS_PADRAO = [
+        ['categoria', 'Categoria'], ['subcategoria', 'Subcategoria'], ['sistema', 'Sistema afetado'],
+        ['modulo', 'Módulo / tela'], ['impacto', 'Impacto'], ['urgencia', 'Urgência'],
+        ['unidade', 'Unidade / setor'], ['contato', 'Contato'], ['anexos', 'Anexos'],
+    ];
+    // chave do campo padrão → id do controle na tela de abertura
+    const MAPA_CAMPOS_PADRAO = {
+        categoria: 'abrir-categoria', subcategoria: 'abrir-subcategoria', sistema: 'abrir-sistema',
+        modulo: 'abrir-modulo', impacto: 'abrir-impacto', urgencia: 'abrir-urgencia',
+        unidade: 'abrir-unidade', contato: 'abrir-contato', anexos: 'abrir-anexos',
+    };
+
     async function abrirEditorModelo(m) {
         const ed = !!m;
         const cats = await garantirCategorias();
@@ -1850,29 +2058,133 @@
             cats.map(c => `<option value="${c.id}" ${ed && m.categoria_id == c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('');
         const optsImp = ['', 'baixo', 'medio', 'alto', 'critico']
             .map(i => `<option value="${i}" ${ed && (m.impacto_negocio || '') === i ? 'selected' : ''}>${i ? ROTULO_IMPACTO[i] : '—'}</option>`).join('');
+        const marcado = k => (!ed || !m.campos_padrao || m.campos_padrao[k] !== false) ? 'checked' : '';
+        const togglesPadrao = CAMPOS_PADRAO.map(([k, lab]) =>
+            `<label class="cp-check"><input type="checkbox" id="md-pad-${k}" ${marcado(k)}> ${lab}</label>`).join('');
+
         document.getElementById('modal-corpo').innerHTML = `
             <div class="campo"><label>Nome do modelo</label><input id="md-nome" value="${ed ? esc(m.nome) : ''}"></div>
             <div class="campo"><label>Título sugerido</label><input id="md-titulo" value="${ed ? esc(m.titulo || '') : ''}"></div>
             <div class="campo"><label>Descrição pré-preenchida</label><textarea id="md-desc" style="min-height:100px;">${ed ? esc(m.descricao || '') : ''}</textarea></div>
             <div class="linha-campos">
                 <div class="campo"><label>Categoria</label><select id="md-cat">${optsCat}</select></div>
-                <div class="campo"><label>Impacto</label><select id="md-imp">${optsImp}</select></div>
+                <div class="campo"><label>Subcategoria</label><select id="md-sub"><option value="">Sem subcategoria</option></select></div>
             </div>
-            <div class="campo"><label>Sistema afetado</label><input id="md-sis" value="${ed ? esc(m.sistema_afetado || '') : ''}"></div>
+            <div class="linha-campos">
+                <div class="campo"><label>Impacto</label><select id="md-imp">${optsImp}</select></div>
+                <div class="campo"><label>Sistema afetado</label><input id="md-sis" value="${ed ? esc(m.sistema_afetado || '') : ''}"></div>
+            </div>
+            <div class="campo">
+                <label>Campos padrão exibidos na abertura</label>
+                <div class="ajuda" style="margin-bottom:8px;">Desmarque os que este modelo NÃO deve mostrar. (Título e descrição são sempre exigidos.)</div>
+                <div class="md-padrao-grid">${togglesPadrao}</div>
+            </div>
+            <div class="campo">
+                <label>Campos personalizados (chamado modular)</label>
+                <div class="ajuda" style="margin-bottom:8px;">Aparecem na abertura quando este modelo é escolhido. Use ↑↓ para ordenar; em <strong>Seleção</strong>/<strong>Múltipla</strong>, informe as opções separadas por vírgula.</div>
+                <div id="md-campos-lista"></div>
+                <button type="button" id="md-add-campo" class="btn btn-fantasma btn-mini">+ Adicionar campo</button>
+            </div>
             ${ed ? `<div class="campo"><label>Situação</label><select id="md-ativo"><option value="1" ${m.ativo ? 'selected' : ''}>Ativo</option><option value="0" ${!m.ativo ? 'selected' : ''}>Inativo</option></select></div>` : ''}
             <div id="modal-alerta" class="alerta"></div>`;
+
+        // Subcategoria depende da categoria escolhida.
+        function preencherMdSub(catId, selId) {
+            const sel = document.getElementById('md-sub');
+            const cat = cats.find(c => String(c.id) === String(catId));
+            const subs = cat ? (cat.subcategorias || []) : [];
+            sel.innerHTML = '<option value="">Sem subcategoria</option>' +
+                subs.map(s => `<option value="${s.id}" ${String(selId) === String(s.id) ? 'selected' : ''}>${esc(s.nome)}</option>`).join('');
+        }
+        preencherMdSub(ed ? m.categoria_id : '', ed ? m.subcategoria_id : '');
+        document.getElementById('md-cat').addEventListener('change', e => preencherMdSub(e.target.value, ''));
+
+        // --- Construtor de campos personalizados ---
+        const TIPOS_CAMPO = [
+            ['texto', 'Texto'], ['texto_longo', 'Texto longo'], ['numero', 'Número'],
+            ['data', 'Data'], ['selecao', 'Seleção'], ['multipla', 'Múltipla escolha'],
+            ['booleano', 'Sim/Não'],
+        ];
+        let mdCampos = ed && Array.isArray(m.campos_personalizados)
+            ? m.campos_personalizados.map(c => ({ ...c })) : [];
+
+        function linhaCampo(c) {
+            const comOpcoes = c.tipo === 'selecao' || c.tipo === 'multipla';
+            const opts = TIPOS_CAMPO.map(([val, lab]) =>
+                `<option value="${val}" ${c.tipo === val ? 'selected' : ''}>${lab}</option>`).join('');
+            return `<div class="md-campo-row" data-chave="${esc(c.chave || '')}">
+                <div class="mc-linha1">
+                    <input class="mc-rotulo" placeholder="Rótulo do campo" value="${esc(c.rotulo || '')}">
+                    <select class="mc-tipo">${opts}</select>
+                    <label class="cp-check"><input type="checkbox" class="mc-obrig" ${c.obrigatorio ? 'checked' : ''}> obrig.</label>
+                    <button type="button" class="mc-subir btn btn-fantasma btn-mini" title="Subir">↑</button>
+                    <button type="button" class="mc-descer btn btn-fantasma btn-mini" title="Descer">↓</button>
+                    <button type="button" class="mc-remover btn btn-fantasma btn-mini" title="Remover">✕</button>
+                </div>
+                <div class="mc-linha2">
+                    <input class="mc-opcoes" placeholder="Opções (separadas por vírgula)" value="${esc((c.opcoes || []).join(', '))}" style="${comOpcoes ? '' : 'display:none;'}">
+                    <input class="mc-padrao" placeholder="Valor padrão (opcional)" value="${esc(c.padrao || '')}">
+                </div>
+            </div>`;
+        }
+        function lerMdCampos() {
+            return Array.from(document.querySelectorAll('#md-campos-lista .md-campo-row')).map(r => ({
+                chave: r.dataset.chave || null,   // preserva a chave original
+                rotulo: r.querySelector('.mc-rotulo').value.trim(),
+                tipo: r.querySelector('.mc-tipo').value,
+                obrigatorio: r.querySelector('.mc-obrig').checked,
+                opcoes: r.querySelector('.mc-opcoes').value.split(',').map(s => s.trim()).filter(Boolean),
+                padrao: r.querySelector('.mc-padrao').value.trim() || null,
+            }));
+        }
+        function renderMdCampos() {
+            const lista = document.getElementById('md-campos-lista');
+            lista.innerHTML = mdCampos.map(linhaCampo).join('');
+            lista.querySelectorAll('.md-campo-row').forEach((r, i) => {
+                r.querySelector('.mc-tipo').addEventListener('change', e => {
+                    const com = e.target.value === 'selecao' || e.target.value === 'multipla';
+                    r.querySelector('.mc-opcoes').style.display = com ? '' : 'none';
+                });
+                r.querySelector('.mc-remover').addEventListener('click', () => {
+                    mdCampos = lerMdCampos(); mdCampos.splice(i, 1); renderMdCampos();
+                });
+                r.querySelector('.mc-subir').addEventListener('click', () => {
+                    mdCampos = lerMdCampos();
+                    if (i > 0) { [mdCampos[i - 1], mdCampos[i]] = [mdCampos[i], mdCampos[i - 1]]; renderMdCampos(); }
+                });
+                r.querySelector('.mc-descer').addEventListener('click', () => {
+                    mdCampos = lerMdCampos();
+                    if (i < mdCampos.length - 1) { [mdCampos[i + 1], mdCampos[i]] = [mdCampos[i], mdCampos[i + 1]]; renderMdCampos(); }
+                });
+            });
+        }
+        renderMdCampos();
+        document.getElementById('md-add-campo').addEventListener('click', () => {
+            mdCampos = lerMdCampos();
+            mdCampos.push({ rotulo: '', tipo: 'texto', obrigatorio: false, opcoes: [], padrao: null });
+            renderMdCampos();
+        });
+
         document.getElementById('modal-rodape').innerHTML = `
             <button class="btn btn-fantasma" id="md-cancelar">Cancelar</button>
             <button class="btn btn-primario" id="md-salvar">Salvar</button>`;
         document.getElementById('md-cancelar').addEventListener('click', fecharModal);
         document.getElementById('md-salvar').addEventListener('click', async () => {
             const v = id => document.getElementById(id) ? document.getElementById(id).value.trim() : '';
+            const campos = lerMdCampos().filter(c => c.rotulo);
+            const semOpcoes = campos.find(c => (c.tipo === 'selecao' || c.tipo === 'multipla') && !c.opcoes.length);
+            if (semOpcoes) return alertaModal(`O campo "${semOpcoes.rotulo}" é de seleção e precisa de opções.`);
+            const campos_padrao = {};
+            CAMPOS_PADRAO.forEach(([k]) => { campos_padrao[k] = document.getElementById('md-pad-' + k).checked; });
             const dados = {
                 nome: v('md-nome'), titulo: v('md-titulo') || null, descricao: v('md-desc') || null,
                 categoria_id: v('md-cat') ? +v('md-cat') : null,
+                subcategoria_id: v('md-sub') ? +v('md-sub') : null,
                 impacto_negocio: v('md-imp') || null,
                 sistema_afetado: v('md-sis') || null,
                 ativo: ed ? v('md-ativo') === '1' : true,
+                campos_personalizados: campos,
+                campos_padrao,
             };
             if (dados.nome.length < 3) return alertaModal('Nome do modelo muito curto.');
             try {
@@ -1932,6 +2244,8 @@
             const titulo = ehFer ? esc(feriadosMap[data] || 'Feriado') : '';
             html += `<div class="${cls}" data-data="${data}" title="${titulo}">${dia}</div>`;
         }
+        // Completa sempre 6 semanas (42 células) para a altura ficar FIXA entre os meses.
+        for (let i = primeiroDow + diasNoMes; i < 42; i++) html += '<div class="cal-dia vazio"></div>';
         cal.innerHTML = html;
         cal.querySelectorAll('.cal-dia[data-data]').forEach(el =>
             el.addEventListener('click', () => cliqueDia(el.dataset.data, el)));
@@ -1982,7 +2296,67 @@
         if (cp) cp.addEventListener('click', () => { calMes.setMonth(calMes.getMonth() - 1); renderCalendario(); });
         const cn = document.getElementById('cal-prox');
         if (cn) cn.addEventListener('click', () => { calMes.setMonth(calMes.getMonth() + 1); renderCalendario(); });
+        const bsf = document.getElementById('btn-sinc-feriados');
+        if (bsf) bsf.addEventListener('click', async () => {
+            bsf.disabled = true; const txt = bsf.textContent; bsf.innerHTML = '<span class="spinner"></span> Sincronizando...';
+            try {
+                const r = await API.sincronizarFeriados();
+                await carregarConfig();
+                alert(r.detail || 'Feriados sincronizados.');
+            } catch (e) { alert(e.message); }
+            finally { bsf.disabled = false; bsf.textContent = txt; }
+        });
     }
+
+    // ================================================================== //
+    // CALENDÁRIO (todos) — prazos de SLA dos chamados visíveis + feriados
+    // ================================================================== //
+    let calGeralMes = new Date();
+    async function carregarCalendarioGeral() {
+        const ano = calGeralMes.getFullYear(), mes = calGeralMes.getMonth() + 1;
+        const tit = document.getElementById('calg-titulo');
+        if (tit) tit.textContent = `${MESES[mes - 1]} ${ano}`;
+        const grade = document.getElementById('calg-grade');
+        if (!grade) return;
+        grade.innerHTML = '<div style="padding:24px;color:var(--cor-texto-suave);">Carregando...</div>';
+        let ev;
+        try { ev = await API.calendarioEventos(ano, mes); }
+        catch (e) { grade.innerHTML = `<div style="padding:24px;color:#b3261e;">${esc(e.message)}</div>`; return; }
+
+        const feriasDia = {}; ev.feriados.forEach(f => feriasDia[f.data] = f.descricao);
+        const chDia = {}; ev.chamados.forEach(c => { (chDia[c.data] = chDia[c.data] || []).push(c); });
+
+        const primeiro = new Date(ano, mes - 1, 1);
+        const offset = primeiro.getDay();
+        const diasNoMes = new Date(ano, mes, 0).getDate();
+        let html = DOW.map(d => `<div class="cal-dow">${d}</div>`).join('');
+        for (let i = 0; i < offset; i++) html += '<div class="cal-cel vazia"></div>';
+        for (let dia = 1; dia <= diasNoMes; dia++) {
+            const k = iso(new Date(ano, mes - 1, dia));
+            const fer = feriasDia[k];
+            const evs = (chDia[k] || []).map(c => {
+                const cls = c.encerrado ? 'ev-fim' : c.vencido ? 'ev-venc' : 'ev-ok';
+                return `<button class="cal-ev ${cls}" data-id="${c.id}" title="${esc(c.titulo)} — ${esc(ROTULO_STATUS[c.status] || c.status)}">${esc(c.numero_protocolo || '#' + c.id)}</button>`;
+            }).join('');
+            html += `<div class="cal-cel ${fer ? 'cal-feriado' : ''}">
+                <div class="cal-cel-num">${dia}</div>
+                ${fer ? `<div class="cal-feriado-chip" title="${esc(fer)}">${esc(fer)}</div>` : ''}
+                <div class="cal-evs">${evs}</div>
+            </div>`;
+        }
+        grade.innerHTML = html;
+        grade.querySelectorAll('.cal-ev').forEach(b => b.addEventListener('click', () => {
+            const id = +b.dataset.id;
+            if (ehAdmin) { navegar('gestao'); abrirModalAdmin(id); }
+            else { navegar('meus'); abrirModalUsuario(id); }
+        }));
+    }
+    (() => {
+        const p = document.getElementById('calg-prev');
+        const n = document.getElementById('calg-prox');
+        if (p) p.addEventListener('click', () => { calGeralMes.setMonth(calGeralMes.getMonth() - 1); carregarCalendarioGeral(); });
+        if (n) n.addEventListener('click', () => { calGeralMes.setMonth(calGeralMes.getMonth() + 1); carregarCalendarioGeral(); });
+    })();
 
     // --- Busca global (topo) ---
     // Admin: abre a Gestão já filtrada. Demais: filtra "Meus chamados".

@@ -212,6 +212,8 @@ const API = (() => {
         salvarConfigSla: (itens) => requisitar('/api/admin/config/sla', { method: 'PUT', body: JSON.stringify({ itens }) }),
         adicionarFeriado: (data, descricao) => requisitar('/api/admin/config/feriados', { method: 'POST', body: JSON.stringify({ data, descricao }) }),
         removerFeriado: (data) => requisitar(`/api/admin/config/feriados/${data}`, { method: 'DELETE' }),
+        sincronizarFeriados: (ano) => requisitar('/api/admin/config/feriados/sincronizar' + (ano ? `?ano=${ano}` : ''), { method: 'POST' }),
+        calendarioEventos: (ano, mes) => requisitar(`/api/chamados/calendario?ano=${ano}&mes=${mes}`),
 
         similares: (id) => requisitar(`/api/admin/chamados/${id}/similares`),
         promoverArtigo: (id, titulo, conteudo) =>
@@ -263,6 +265,10 @@ const API = (() => {
             requisitar('/api/admin/reset-db', {
                 method: 'POST', body: JSON.stringify({ matricula, senha }),
             }),
+        limparDados: (matricula, senha) =>
+            requisitar('/api/admin/limpar-dados', {
+                method: 'POST', body: JSON.stringify({ matricula, senha }),
+            }),
 
         // --- Usuários ---
         usuarios: () => requisitar('/api/admin/usuarios'),
@@ -270,6 +276,8 @@ const API = (() => {
             requisitar('/api/admin/usuarios', { method: 'POST', body: JSON.stringify(dados) }),
         atualizarUsuario: (id, dados) =>
             requisitar(`/api/admin/usuarios/${id}`, { method: 'PUT', body: JSON.stringify(dados) }),
+        excluirUsuario: (id) =>
+            requisitar(`/api/admin/usuarios/${id}`, { method: 'DELETE' }),
         organograma: () => requisitar('/api/admin/usuarios/organograma'),
     };
 })();

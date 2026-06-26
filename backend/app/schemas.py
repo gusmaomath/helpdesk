@@ -12,7 +12,7 @@ confiamos só no cliente.
 import html
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -288,6 +288,10 @@ class ChamadoCriar(BaseModel):
     indisponibilidade_fim: Optional[datetime] = None
     # Abertura em nome de terceiro (analista no atendimento telefônico).
     solicitante_id: Optional[int] = None
+    # Chamado modular: modelo escolhido + respostas dos campos personalizados
+    # (mapa chave→valor). Validados/normalizados no servidor contra o modelo.
+    template_id: Optional[int] = None
+    campos_personalizados: Optional[dict[str, Any]] = None
 
     @field_validator("titulo")
     @classmethod
@@ -481,6 +485,8 @@ class ChamadoDetalhe(ChamadoResposta):
     anexos: list[AnexoResposta] = []
     avaliacao: Optional[AvaliacaoResposta] = None
     tags: list[str] = []
+    # Respostas dos campos personalizados (snapshot): [{"rotulo": str, "valor": str}].
+    campos_personalizados: list[dict] = []
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -489,6 +495,11 @@ class ChamadoDetalhe(ChamadoResposta):
         if not v:
             return []
         return [t.nome if hasattr(t, "nome") else t for t in v]
+
+    @field_validator("campos_personalizados", mode="before")
+    @classmethod
+    def _campos_coerce(cls, v):
+        return v or []
 
 
 # --------------------------------------------------------------------------- #
@@ -606,6 +617,61 @@ class NotificacaoResposta(BaseModel):
 # --------------------------------------------------------------------------- #
 # Templates de chamado
 # --------------------------------------------------------------------------- #
+# Tipos de campo personalizado suportados nos chamados modulares.
+TIPOS_CAMPO = {"texto", "texto_longo", "numero", "data", "selecao", "multipla", "booleano"}
+TIPOS_COM_OPCOES = {"selecao", "multipla"}
+
+
+class CampoPersonalizado(BaseModel):
+    """Definição de um campo personalizado de um modelo (chamado modular)."""
+    chave: Optional[str] = None
+    rotulo: str
+    tipo: str = "texto"
+    obrigatorio: bool = False
+    opcoes: list[str] = []
+    padrao: Optional[str] = None  # valor pré-preenchido na abertura
+
+    @field_validator("padrao")
+    @classmethod
+    def vpadrao(cls, v):
+        return _sanitizar_opcional(v)
+
+    @field_validator("rotulo")
+    @classmethod
+    def vrotulo(cls, v: str) -> str:
+        v = (v or "").strip()
+        if len(v) < 1:
+            raise ValueError("Cada campo precisa de um rótulo.")
+        return _sanitizar(v[:80])
+
+    @field_validator("tipo")
+    @classmethod
+    def vtipo(cls, v: str) -> str:
+        v = (v or "texto").strip().lower()
+        if v not in TIPOS_CAMPO:
+            raise ValueError(f"Tipo de campo inválido: {v}")
+        return v
+
+    @field_validator("opcoes")
+    @classmethod
+    def vopcoes(cls, v):
+        limpas = []
+        for o in (v or []):
+            o = _sanitizar((o or "").strip())[:80]
+            if o and o not in limpas:
+                limpas.append(o)
+        return limpas[:30]
+
+    def normalizar(self) -> "CampoPersonalizado":
+        # Gera a chave a partir do rótulo quando ausente; valida opções.
+        if not self.chave:
+            base = re.sub(r"[^a-z0-9]+", "_", self.rotulo.lower()).strip("_")
+            self.chave = base or "campo"
+        if self.tipo in TIPOS_COM_OPCOES and not self.opcoes:
+            raise ValueError(f"O campo '{self.rotulo}' é de seleção e precisa de opções.")
+        return self
+
+
 class TemplateBase(BaseModel):
     nome: str
     titulo: Optional[str] = None
@@ -615,6 +681,8 @@ class TemplateBase(BaseModel):
     sistema_afetado: Optional[str] = None
     impacto_negocio: Optional[ImpactoNegocio] = None
     ativo: bool = True
+    campos_personalizados: list[CampoPersonalizado] = []
+    campos_padrao: Optional[dict[str, bool]] = None
 
     @field_validator("nome")
     @classmethod
@@ -629,6 +697,18 @@ class TemplateBase(BaseModel):
     def san(cls, v):
         return _sanitizar_opcional(v)
 
+    @field_validator("campos_personalizados")
+    @classmethod
+    def vcampos(cls, v):
+        vistos, saida = set(), []
+        for c in (v or [])[:25]:
+            c = c.normalizar()
+            if c.chave in vistos:
+                c.chave = f"{c.chave}_{len(saida)}"
+            vistos.add(c.chave)
+            saida.append(c)
+        return saida
+
 
 class TemplateResposta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -641,6 +721,13 @@ class TemplateResposta(BaseModel):
     sistema_afetado: Optional[str] = None
     impacto_negocio: Optional[ImpactoNegocio] = None
     ativo: bool
+    campos_personalizados: list[CampoPersonalizado] = []
+    campos_padrao: Optional[dict[str, bool]] = None
+
+    @field_validator("campos_personalizados", mode="before")
+    @classmethod
+    def coerce_campos(cls, v):
+        return v or []
 
 
 # --------------------------------------------------------------------------- #

@@ -12,13 +12,27 @@ Regras importantes:
 - Prevenção de ciclo: um usuário não pode ser supervisor de si mesmo nem de um
   ancestral (evita loop na árvore).
 """
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.services import auditoria
 from app.security.auth import exigir_admin, gerar_hash_senha, ip_requisicao
 from app.database import get_db
-from app.models import NivelAcesso, Papel, Usuario
+from app.models import (
+    Anexo,
+    Artigo,
+    ArtigoVoto,
+    Auditoria,
+    Chamado,
+    Comentario,
+    NivelAcesso,
+    Notificacao,
+    Papel,
+    Usuario,
+)
 from app.schemas import UsuarioAtualizar, UsuarioCriar, UsuarioResposta
 
 router = APIRouter(prefix="/api/admin/usuarios", tags=["Usuários"])
@@ -146,6 +160,93 @@ def atualizar(
     db.commit()
     db.refresh(usuario)
     return usuario
+
+
+def _tem_historico(db: Session, uid: int) -> bool:
+    """True se o usuário aparece em chamados/comentários/anexos/auditoria/KB."""
+    if db.query(Chamado.id).filter(or_(
+        Chamado.autor_id == uid,
+        Chamado.aberto_por_id == uid,
+        Chamado.atribuido_a_id == uid,
+    )).first():
+        return True
+    if db.query(Comentario.id).filter(Comentario.autor_id == uid).first():
+        return True
+    if db.query(Anexo.id).filter(Anexo.enviado_por_id == uid).first():
+        return True
+    if db.query(Auditoria.id).filter(Auditoria.usuario_id == uid).first():
+        return True
+    if db.query(Artigo.id).filter(Artigo.criado_por_id == uid).first():
+        return True
+    return False
+
+
+@router.delete("/{usuario_id}")
+def excluir(
+    usuario_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(exigir_admin),
+):
+    """
+    Exclui um usuário.
+      - Sem histórico  -> apaga de verdade (hard delete).
+      - Com histórico  -> ANONIMIZA e desativa (preserva a trilha/chamados).
+    Protege contra apagar a si mesmo ou o último administrador ativo.
+    """
+    alvo = db.get(Usuario, usuario_id)
+    if alvo is None:
+        raise HTTPException(404, "Usuário não encontrado.")
+    if alvo.id == admin.id:
+        raise HTTPException(422, "Você não pode excluir o próprio usuário.")
+    if alvo.nivel_acesso == NivelAcesso.ADMINISTRADOR:
+        outros_admins = db.query(Usuario.id).filter(
+            Usuario.nivel_acesso == NivelAcesso.ADMINISTRADOR,
+            Usuario.id != alvo.id,
+            Usuario.ativo == 1,
+        ).first()
+        if not outros_admins:
+            raise HTTPException(422, "Não é possível excluir o último administrador.")
+
+    # Subordinados "sobem" para o supervisor do excluído (evita órfãos/FK solta).
+    db.query(Usuario).filter(Usuario.supervisor_id == alvo.id).update(
+        {Usuario.supervisor_id: alvo.supervisor_id}, synchronize_session=False
+    )
+    # Linhas puramente pessoais podem ir embora nos dois caminhos.
+    db.query(Notificacao).filter(Notificacao.usuario_id == alvo.id).delete(synchronize_session=False)
+    db.query(ArtigoVoto).filter(ArtigoVoto.usuario_id == alvo.id).delete(synchronize_session=False)
+
+    tinha_historico = _tem_historico(db, alvo.id)
+    matricula = alvo.matricula
+
+    if tinha_historico:
+        # Anonimiza: mantém a linha (e as FKs), remove PII e bloqueia o acesso.
+        alvo.nome = f"Usuário removido #{alvo.id}"
+        alvo.matricula = f"removido_{alvo.id}"
+        alvo.email = None
+        alvo.ramal = None
+        alvo.ativo = 0
+        alvo.senha_hash = gerar_hash_senha(secrets.token_urlsafe(24))
+        alvo.token_version += 1  # derruba sessões abertas
+        acao = "anonimizado"
+    else:
+        db.delete(alvo)
+        acao = "apagado"
+
+    auditoria.registrar(
+        db, usuario=admin, acao=f"usuario_{acao}", entidade="usuario",
+        entidade_id=usuario_id, detalhe={"matricula": matricula},
+        ip=ip_requisicao(request),
+    )
+    db.commit()
+    return {
+        "detail": (
+            f"Usuário '{matricula}' apagado." if acao == "apagado"
+            else f"Usuário '{matricula}' tinha histórico: foi anonimizado e desativado "
+                 "(o histórico/chamados foram preservados)."
+        ),
+        "acao": acao,
+    }
 
 
 @router.get("/organograma")

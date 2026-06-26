@@ -82,6 +82,12 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Acesse: **http://localhost:8000** · Documentação da API: **http://localhost:8000/docs**
 
+> **Onde fica o banco:** o SQLite e os anexos são gravados **sempre** em
+> **`<raiz-do-projeto>/db/`** (`db/helpdesk.db` e `db/uploads/`), com **caminho
+> absoluto** — não importa de qual pasta você rode o comando. O seed grava/lê do
+> mesmo lugar. Dá para sobrescrever com `HELPDESK_DATABASE_URL` / `HELPDESK_UPLOAD_DIR`.
+> A pasta `db/` é ignorada pelo git.
+
 > **Schema e migrações:** em **desenvolvimento**, `python seed.py --reset` recria
 > tudo do zero (rápido). Para **migrações versionadas** há **Alembic** configurado
 > (com `render_as_batch=True` por causa do `ALTER TABLE` limitado do SQLite):
@@ -163,6 +169,9 @@ qualquer tela.
   no detalhe do chamado — clique para ampliar (lightbox); os demais têm link de baixar.
 - **Busca global** no topo: encontra um chamado por **protocolo ou título** entre os
   seus chamados, de qualquer tela.
+- **Calendário** (para todos): um mês visual com as **previsões de entrega (SLA)** dos
+  chamados que você enxerga (verde = no prazo, vermelho = vencido, cinza = encerrado)
+  e os **feriados**. Clique num chamado para abri-lo.
 - **Base de conhecimento**: página própria para **buscar artigos** e se autoatender.
 - **Como usar**: manual integrado, com a seção do **seu perfil destacada** e o guia
   completo de todos os perfis (conceitos, status, SLA, hierarquia e FAQ).
@@ -198,18 +207,40 @@ qualquer tela.
 - **Busca global** no topo: localiza qualquer chamado do sistema por protocolo/título.
 - **Kanban operacional** (sub-aba de Chamados): arraste os cartões entre colunas para
   mudar o status (validado pela máquina de estados); clique abre o chamado.
-- **Modelos de chamado**: criar/editar/excluir os formulários pré-preenchidos.
+- **Modelos de chamado (formulário montável)**: criar/editar/excluir formulários
+  e montá-los **do zero** por modelo:
+  - **Campos personalizados**: texto, texto longo, número, data, **seleção**,
+    **múltipla escolha**, sim/não — com **obrigatório**, **valor padrão** e
+    **reordenação (↑↓)**.
+  - **Campos padrão liga/desliga**: escolha quais campos do formulário normal
+    (categoria, subcategoria, sistema, módulo, impacto, urgência, unidade, contato,
+    anexos) o modelo exibe — o que não interessa some.
+  - Pré-preenche título, descrição, **categoria/subcategoria**, impacto e sistema.
+  - Ao escolher o modelo na abertura, tudo isso é aplicado; **sem modelo, abre o
+    formulário normal completo**. As respostas dos campos ficam no detalhe do chamado.
 - **SLA & Feriados**: editar as **horas-úteis por prioridade** e gerenciar os
   **feriados** num **calendário** (já vem com o **calendário da B3**) — clique num
-  dia livre para marcar, num feriado para remover. Não contam no prazo.
+  dia livre para marcar, num feriado para remover. Não contam no prazo. Há ainda
+  **🔄 Sincronizar B3**, que importa o calendário oficial via
+  `pandas_market_calendars` (com **fallback** para o cálculo local se a lib não
+  estiver instalada).
+- **Árvore hierárquica**: ao abrir um usuário, o modal mostra a **cadeia de chefias
+  acima** dele e os **subordinados diretos**, destacando o usuário atual.
 - **Categorias**: gerir a **taxonomia** (categorias e subcategorias) usada na triagem
   e nos filtros.
 - **Base de conhecimento**: criar, **editar** e excluir artigos.
 - **Gestão de usuários**: criar/editar, ativar/desativar, **aprovar** cadastros
-  pendentes, definir papel/supervisor e **redefinir a senha de qualquer usuário**
-  (que passa a ser provisória → troca no próximo acesso).
+  pendentes, **redefinir a senha de qualquer usuário** (que passa a ser provisória →
+  troca no próximo acesso) e **excluir**: sem histórico é **apagado de verdade**; com
+  histórico (chamados/comentários/auditoria) é **anonimizado e desativado** para
+  preservar a trilha. Não dá para excluir a si mesmo nem o último administrador.
 - **Trilha de auditoria**: quem fez o quê, quando e de onde.
-- **Reset do banco**: botão protegido por re-confirmação de matrícula + senha.
+- **Limpar dados**: apaga os **dados de movimento** (chamados, comentários, anexos,
+  avaliações, notificações, auditoria, etiquetas) **preservando** usuários e
+  configuração (categorias, SLA, feriados, modelos, KB) — **não roda o seed**. Ideal
+  na virada de teste → produção. Protegido por re-confirmação de matrícula + senha.
+- **Reset do banco**: apaga tudo **e recria o seed** (dados de exemplo). Também
+  protegido por re-confirmação de matrícula + senha.
 
 ## Capturas de tela
 

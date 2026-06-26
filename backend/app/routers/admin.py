@@ -46,20 +46,27 @@ from app.services.estado import (
     transicao_valida,
 )
 from app.models import (
+    Anexo,
     Artigo,
+    ArtigoVoto,
     Auditoria,
+    Avaliacao,
     Categoria,
     Chamado,
     Comentario,
+    Contador,
     Feriado,
     Gravidade,
+    Notificacao,
     ParametroSla,
+    RegistroRate,
     StatusChamado,
     Subcategoria,
     Tag,
     Template,
     Usuario,
     agora_utc,
+    chamado_tags,
 )
 from app.services.notificacoes import notificar_usuario
 from app.schemas import (
@@ -763,6 +770,67 @@ def resetar_banco(
     }
 
 
+@router.post("/limpar-dados")
+def limpar_dados(
+    dados: ConfirmacaoCredencial,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(exigir_admin),
+):
+    """
+    Apaga os DADOS DE MOVIMENTO (chamados, comentários, anexos, avaliações,
+    notificações, auditoria, votos, etiquetas, contadores e rate-limit), MAS
+    PRESERVA todos os cadastros e a configuração: usuários, categorias/
+    subcategorias, parâmetros de SLA, feriados, modelos e a base de conhecimento.
+
+    NÃO roda o seed. Mesma dupla proteção do reset (admin + re-confirmação).
+    """
+    if dados.matricula != admin.matricula or not verificar_senha(
+        dados.senha, admin.senha_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Credenciais de confirmação inválidas.",
+        )
+
+    # Ordem segura para as FKs: dependentes → chamados → tabelas avulsas.
+    db.execute(chamado_tags.delete())
+    for modelo in (Comentario, Anexo, Avaliacao, Notificacao, ArtigoVoto):
+        db.query(modelo).delete(synchronize_session=False)
+    db.query(Chamado).delete(synchronize_session=False)
+    for modelo in (Tag, Auditoria, Contador, RegistroRate):
+        db.query(modelo).delete(synchronize_session=False)
+    # Auditoria registrada DEPOIS de limpar a tabela — assim o registro da
+    # própria limpeza sobrevive (fica como o primeiro evento do banco limpo).
+    auditoria.registrar(
+        db, usuario=admin, acao="limpar_dados", entidade="sistema",
+        ip=ip_requisicao(request), commit=True,
+    )
+
+    # Remove os arquivos de anexo do disco (best-effort).
+    import os
+    import shutil
+    from app.config import config as cfg
+    try:
+        if os.path.isdir(cfg.UPLOAD_DIR):
+            shutil.rmtree(cfg.UPLOAD_DIR)
+        os.makedirs(cfg.UPLOAD_DIR, exist_ok=True)
+    except OSError:
+        pass
+
+    # Reconstrói o índice FTS (ficou apontando para chamados que não existem mais).
+    try:
+        from app.services import busca
+        busca.garantir_fts(db.get_bind())
+    except Exception:
+        pass
+
+    return {
+        "detail": "Dados de movimento apagados. Usuários, categorias, SLA, "
+                  "feriados, modelos e base de conhecimento foram preservados.",
+    }
+
+
 @router.post("/subcategorias", status_code=201)
 def criar_subcategoria(
     dados: SubcategoriaCriar,
@@ -947,3 +1015,25 @@ def remover_feriado(data: str, db: Session = Depends(get_db), admin: Usuario = D
         raise HTTPException(404, "Feriado não encontrado.")
     db.delete(f)
     db.commit()
+
+
+@router.post("/config/feriados/sincronizar")
+def sincronizar_feriados(
+    ano: Optional[int] = Query(None, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(exigir_admin),
+):
+    """
+    Importa o calendário de feriados da B3 (sem digitar). Usa
+    `pandas_market_calendars` se disponível; senão, o cálculo local. Por padrão,
+    sincroniza o ano atual e o próximo.
+    """
+    from app.services.feriados import sincronizar
+    base = ano or agora_utc().year
+    anos = (base,) if ano else (base, base + 1)
+    novos, fonte = sincronizar(db, anos)
+    return {
+        "detail": f"{novos} feriado(s) novo(s) importado(s) ({', '.join(map(str, anos))}) via {fonte}.",
+        "novos": novos,
+        "fonte": fonte,
+    }

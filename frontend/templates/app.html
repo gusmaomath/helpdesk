@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Helpdesk Corporativo</title>
-    <link rel="stylesheet" href="/static/css/estilo.css?v=12">
+    <link rel="stylesheet" href="/static/css/estilo.css?v=15">
     <script src="/static/js/tema.js?v=8"></script>
     <!-- Chart.js servido localmente seria o ideal em rede fechada; aqui via CDN.
          Em produção bancária, baixe o arquivo e sirva de /static. -->
@@ -92,6 +92,9 @@
                             ✓ Isso resolveu, não preciso abrir
                         </button>
                     </div>
+
+                    <!-- Campos personalizados do modelo escolhido (chamado modular) -->
+                    <div id="campos-template" class="campos-template" style="display:none;"></div>
 
                     <div class="linha-campos">
                         <div class="campo">
@@ -266,14 +269,27 @@
                     <h1>Configurações de SLA</h1>
                     <p>Defina as horas-úteis por prioridade e os feriados (não contam no prazo).</p>
                 </div>
-                <div class="grid-graficos">
-                    <div class="painel">
-                        <h3>Horas de SLA por prioridade</h3>
+                <div class="config-grid">
+                    <div class="painel config-card">
+                        <div class="config-card-cab">
+                            <span class="config-ico">⏱️</span>
+                            <div>
+                                <h3>Horas de SLA por prioridade</h3>
+                                <p class="config-sub">Quanto tempo (horas úteis) cada prioridade tem para ser resolvida.</p>
+                            </div>
+                        </div>
                         <div id="config-sla-form"></div>
-                        <button id="btn-salvar-sla" class="btn btn-primario btn-mini" style="margin-top:14px;">Salvar horas</button>
+                        <button id="btn-salvar-sla" class="btn btn-primario btn-mini" style="margin-top:16px;">Salvar horas</button>
                     </div>
-                    <div class="painel">
-                        <h3>Feriados — calendário</h3>
+                    <div class="painel config-card">
+                        <div class="config-card-cab">
+                            <span class="config-ico">📅</span>
+                            <div>
+                                <h3>Feriados</h3>
+                                <p class="config-sub">Não contam no prazo de SLA. Já vem com o calendário da B3.</p>
+                            </div>
+                            <button id="btn-sinc-feriados" class="btn btn-secundario btn-mini" title="Importa os feriados da B3 do ano atual e do próximo">🔄 Sincronizar B3</button>
+                        </div>
                         <div class="cal-nav">
                             <button id="cal-prev" class="btn btn-fantasma btn-mini">‹</button>
                             <strong id="cal-titulo">—</strong>
@@ -285,6 +301,28 @@
                             clique num <strong>feriado</strong> para removê-lo.
                         </div>
                         <div id="cal-add" class="cal-add" style="display:none;"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- PÁGINA: Calendário (todos) — prazos de SLA + feriados -->
+            <section class="pagina" id="pg-calendario">
+                <div class="pagina-cabecalho">
+                    <h1>Calendário</h1>
+                    <p>As <strong>previsões de entrega (SLA)</strong> dos chamados que você acompanha e os feriados. Clique num chamado para abrir.</p>
+                </div>
+                <div class="painel">
+                    <div class="cal-nav">
+                        <button id="calg-prev" class="btn btn-fantasma btn-mini">‹</button>
+                        <strong id="calg-titulo">—</strong>
+                        <button id="calg-prox" class="btn btn-fantasma btn-mini">›</button>
+                    </div>
+                    <div id="calg-grade" class="calendario-grande"></div>
+                    <div class="cal-legenda">
+                        <span><span class="cal-dot dot-ok"></span> no prazo</span>
+                        <span><span class="cal-dot dot-venc"></span> vencido</span>
+                        <span><span class="cal-dot dot-fim"></span> encerrado</span>
+                        <span><span class="cal-feriado-chip mini">feriado</span></span>
                     </div>
                 </div>
             </section>
@@ -356,10 +394,14 @@
                             <p>Clique no <strong>seu nome</strong> (ao lado do sino) para atualizar <strong>e-mail e ramal</strong> e <strong>trocar sua senha</strong> quando quiser.</p>
                             <h4>Busca rápida (topo)</h4>
                             <p>Use a <strong>barra de busca</strong> no topo para encontrar um chamado por <strong>protocolo ou título</strong> de qualquer tela. O solicitante busca entre os seus chamados; o administrador busca em todo o sistema.</p>
+                            <h4>Calendário 📅</h4>
+                            <p>A aba <strong>Calendário</strong> mostra, mês a mês, a <strong>previsão de entrega (prazo de SLA)</strong> dos chamados que você acompanha — <span class="sla-chip sla-ok">no prazo</span>, <span class="sla-chip sla-vencido">vencido</span> ou cinza (encerrado) — além dos <strong>feriados</strong>. Clique num chamado no dia para abri-lo.</p>
                             <h4>Anexos com pré-visualização</h4>
                             <p>No detalhe do chamado, anexos de <strong>imagem</strong> aparecem como <strong>miniaturas</strong> — clique para ampliar; os demais arquivos têm link de <strong>baixar</strong>.</p>
+                            <h4>Cores da sua instituição (marca)</h4>
+                            <p>Cada usuário pertence a uma <strong>instituição</strong>, escolhida <strong>no cadastro</strong>, que define o esquema de cores da interface: <strong>Bradesco BBI</strong> (vinho) ou <strong>Ágora Investimentos</strong> (verde‑petróleo). A cor é aplicada automaticamente ao entrar; o administrador também define a instituição ao criar o usuário.</p>
                             <h4>Tema claro/escuro</h4>
-                            <p>Use o botão <strong>🌙 Escuro / ☀️ Claro</strong> no canto superior direito. A escolha fica salva.</p>
+                            <p>Use o botão <strong>🌙 Escuro / ☀️ Claro</strong> no canto superior direito. A escolha fica salva. O tema funciona junto com a cor da instituição.</p>
                             <h4>Trocar senha</h4>
                             <p>Se a sua conta foi criada por um administrador, no <strong>primeiro acesso</strong> o sistema obriga a definir uma nova senha (mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo).</p>
                             <h4>Base de conhecimento</h4>
@@ -376,7 +418,7 @@
                             <h4>Abrir um chamado</h4>
                             <ol>
                                 <li>Vá em <strong>Abrir chamado</strong>.</li>
-                                <li>Opcional: escolha um <strong>modelo</strong> (ex.: "Solicitar acesso", "Trocar periférico") que já preenche título, descrição e categoria.</li>
+                                <li>Opcional: escolha um <strong>modelo</strong> (ex.: "Solicitar acesso", "Trocar periférico") que já preenche título, descrição e categoria — e pode exibir <strong>campos extras</strong> próprios daquele pedido (ex.: sistema, perfil de acesso). Sem modelo, o formulário é o normal.</li>
                                 <li>Escreva um <strong>título</strong> claro e uma <strong>descrição completa</strong> (mín. 30 caracteres): o que aconteceu, desde quando, mensagem de erro, sistema/tela afetados.</li>
                                 <li>Enquanto digita, veja o painel <strong>"💡 Isso já não resolve?"</strong> — ele sugere artigos e chamados parecidos já resolvidos. Se resolver, clique em <strong>"Isso resolveu, não preciso abrir"</strong> e pronto — nada é aberto.</li>
                                 <li>Opcional: preencha categoria, sistema, módulo, impacto, urgência, unidade e contato — quanto mais detalhe, mais rápida a triagem.</li>
@@ -415,10 +457,11 @@
                         <summary>🛠️ Guia do Administrador <span class="tag-perfil">admin</span></summary>
                         <div class="ajuda-corpo">
                             <h4>Como o menu é organizado</h4>
-                            <p>O menu tem <strong>5 itens</strong>. Dois deles abrem <strong>sub-abas</strong> (uma faixa logo abaixo do título):</p>
+                            <p>O menu tem <strong>6 itens</strong>. Dois deles abrem <strong>sub-abas</strong> (uma faixa logo abaixo do título):</p>
                             <ul>
                                 <li><strong>Painel</strong> — indicadores.</li>
                                 <li><strong>Chamados</strong> → <em>Lista</em> · <em>Minha fila</em> · <em>Kanban</em>.</li>
+                                <li><strong>Calendário</strong> — prazos de SLA e feriados.</li>
                                 <li><strong>Conhecimento</strong> — base de artigos.</li>
                                 <li><strong>Administração</strong> → <em>Usuários</em> · <em>Modelos</em> · <em>SLA &amp; Feriados</em> · <em>Categorias</em> · <em>Auditoria</em>.</li>
                                 <li><strong>Como usar</strong> — este manual.</li>
@@ -450,11 +493,16 @@
                             <h4>Kanban</h4>
                             <p>Sub-aba de <strong>Chamados</strong>: visão por colunas de status. <strong>Arraste</strong> o cartão entre colunas para mudar o status; clique para abrir o chamado.</p>
 
-                            <h4>Modelos de chamado</h4>
-                            <p>Em <strong>Administração → Modelos</strong>, crie/edite/exclua os formulários pré-preenchidos que aparecem na abertura (título, descrição, categoria e impacto sugeridos).</p>
+                            <h4>Modelos de chamado (formulário montável)</h4>
+                            <p>Em <strong>Administração → Modelos</strong>, você monta o formulário de cada tipo de pedido <strong>do zero</strong>. Pré-preenche título, descrição, <strong>categoria/subcategoria</strong>, impacto e sistema; e ainda:</p>
+                            <ul>
+                                <li><strong>Campos personalizados</strong> — <strong>+ Adicionar campo</strong> com <strong>rótulo</strong>, <strong>tipo</strong> (texto, texto longo, número, data, <strong>seleção</strong>, <strong>múltipla escolha</strong>, sim/não), <strong>obrigatório</strong>, <strong>valor padrão</strong> e <strong>opções</strong> (para seleção/múltipla, separadas por vírgula). Use <strong>↑↓</strong> para reordenar.</li>
+                                <li><strong>Campos padrão exibidos</strong> — marque/desmarque quais campos do formulário normal (categoria, subcategoria, sistema, módulo, impacto, urgência, unidade, contato, anexos) o modelo mostra. O que você desmarcar <strong>não aparece</strong> na abertura.</li>
+                            </ul>
+                            <p>Ao escolher o modelo na abertura, tudo é aplicado; <strong>sem modelo, abre o formulário normal completo</strong>. As respostas dos campos ficam no detalhe do chamado.</p>
 
                             <h4>SLA &amp; Feriados</h4>
-                            <p>Em <strong>Administração → SLA &amp; Feriados</strong>, ajuste as <strong>horas-úteis por prioridade</strong> e gerencie os <strong>feriados</strong> num <strong>calendário</strong> (já vem com o calendário da B3): clique num dia livre para marcar, clique num feriado para remover. Feriados não contam no prazo de SLA.</p>
+                            <p>Em <strong>Administração → SLA &amp; Feriados</strong>, ajuste as <strong>horas-úteis por prioridade</strong> e gerencie os <strong>feriados</strong> num <strong>calendário</strong> (já vem com o calendário da B3): clique num dia livre para marcar, clique num feriado para remover. Feriados não contam no prazo de SLA. O botão <strong>🔄 Sincronizar B3</strong> importa o calendário oficial automaticamente.</p>
 
                             <h4>Categorias</h4>
                             <p>Em <strong>Administração → Categorias</strong>, gerencie a <strong>taxonomia</strong> usada na triagem e nos filtros: crie <strong>categorias</strong> e adicione <strong>subcategorias</strong> a cada uma.</p>
@@ -468,13 +516,19 @@
                                 <li><strong>Aprovar</strong> cadastros pendentes (quem se cadastrou pela tela de login fica inativo até aprovação).</li>
                                 <li><strong>Redefinir a senha</strong> de qualquer usuário (vira provisória → ele troca no próximo acesso).</li>
                                 <li><strong>Ativar/Desativar</strong> — desativar encerra as sessões abertas na hora.</li>
+                                <li><strong>Excluir</strong> — se a pessoa <strong>não tem histórico</strong>, é apagada de verdade; se <strong>tem</strong> (chamados, comentários, auditoria), é <strong>anonimizada e desativada</strong> para preservar a trilha. Não dá para excluir a si mesmo nem o último admin.</li>
+                                <li><strong>Árvore hierárquica</strong> — ao abrir um usuário, o modal mostra a cadeia de chefias acima dele e os subordinados diretos.</li>
                             </ul>
 
                             <h4>Auditoria</h4>
                             <p>Em <strong>Administração → Auditoria</strong>: registro imutável de quem fez o quê, quando e de onde (logins, mudanças de status, cancelamentos, etc.).</p>
 
-                            <h4>Reset do banco</h4>
-                            <p><span class="tag-perfil">admin</span> Apaga tudo e recria os dados de exemplo. Exige reconfirmar matrícula + senha. Use só em ambiente de teste.</p>
+                            <h4>Limpar dados &amp; Reset do banco</h4>
+                            <p><span class="tag-perfil">admin</span> Na <strong>gestão de usuários</strong> há duas ações destrutivas (ambas pedem reconfirmar matrícula + senha):</p>
+                            <ul>
+                                <li><strong>🧹 Limpar dados</strong> — apaga <strong>chamados e movimento</strong> (comentários, anexos, avaliações, notificações, auditoria, etiquetas), mas <strong>mantém</strong> os usuários e a configuração (categorias, SLA, feriados, modelos, KB). <strong>Não</strong> recria dados de exemplo. Ideal ao passar de teste para produção.</li>
+                                <li><strong>⟳ Resetar banco</strong> — apaga tudo <strong>e recria os dados de exemplo</strong> (seed). Use só em ambiente de teste.</li>
+                            </ul>
                         </div>
                     </details>
 
@@ -683,6 +737,7 @@
                 <div class="barra-ferramentas">
                     <button id="btn-novo-usuario" class="btn btn-primario btn-mini">+ Novo usuário</button>
                     <span class="espaco-flex"></span>
+                    <button id="btn-limpar-dados" class="btn btn-fantasma btn-mini" title="Apaga chamados e movimento, mantém usuários e configuração">🧹 Limpar dados</button>
                     <button id="btn-reset-db" class="btn btn-perigo btn-mini">⟳ Resetar banco</button>
                 </div>
                 <div class="tabela-wrap">
@@ -753,7 +808,7 @@
         </div>
     </div>
 
-    <script src="/static/js/api.js?v=10"></script>
-    <script src="/static/js/app.js?v=14"></script>
+    <script src="/static/js/api.js?v=12"></script>
+    <script src="/static/js/app.js?v=19"></script>
 </body>
 </html>
